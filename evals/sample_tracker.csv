@@ -1,0 +1,11 @@
+url,posting_text,decision,reason
+https://example.com/jobs/1,"Backend Engineer. Build REST APIs in Python and FastAPI on PostgreSQL. Two years of experience preferred. Remote.",qualified,Stack match on Python and PostgreSQL
+https://example.com/jobs/2,"Junior Software Engineer. Work on Python services and a React frontend with mentoring from senior engineers. Remote.",qualified,Strong stack match at the right level
+https://example.com/jobs/3,"Software Engineer. Maintain Python data pipelines on PostgreSQL and add automated tests. Remote.",qualified,Stack and experience level match
+https://example.com/jobs/4,"Full Stack Developer. Ship features with React and Python, deployed with Docker. Remote.",qualified,Direct match on React and Python
+https://example.com/jobs/5,"Principal Engineer. Fifteen years of experience required, leading an organisation of forty engineers.",not-qualified,Experience gap of more than a decade
+https://example.com/jobs/6,"Senior Embedded Engineer. Write C firmware for automotive microcontrollers. Eight years required.",not-qualified,Stack mismatch and experience gap
+https://example.com/jobs/7,"iOS Developer. Build native apps in Swift and SwiftUI. Three years shipping to the App Store.",not-qualified,Stack mismatch with no mobile background
+https://example.com/jobs/8,"Staff Machine Learning Researcher. PhD required with first-author publications in training large models.",not-qualified,Experience gap and missing research credentials
+https://example.com/jobs/9,"Accountant. Prepare monthly financial statements and manage tax filings. Certified accountant required.",not-qualified,Different field with no relevant experience
+https://example.com/jobs/10,"Backend Engineer. Python and PostgreSQL. Must work onsite five days a week in a city the candidate cannot relocate to. Compensation is below the candidate's floor.",not-qualified,Location is onsite only and compensation is below floor

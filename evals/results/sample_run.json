@@ -1,0 +1,115 @@
+{
+  "cases": 10,
+  "scored": 10,
+  "agreement_rate": 1.0,
+  "reasoning_checked": 6,
+  "reasoning_match_rate": 1.0,
+  "drafts_checked": 4,
+  "drafts_verified": 4,
+  "input_tokens": 26339,
+  "output_tokens": 4197,
+  "rows": [
+    {
+      "url": "https://example.com/jobs/1",
+      "expected_qualified": true,
+      "predicted_qualified": true,
+      "fit_score": 0.88,
+      "fit_reasoning": "The posting asks for Backend Engineer skills building REST APIs in Python and FastAPI on PostgreSQL, which directly matches the candidate's listed experience (exp-api, exp-latency) and core skills (Python, FastAPI, PostgreSQL). The candidate also has relevant performance-tuning experience with PostgreSQL indexing, which is a plus for a backend role. The posting prefers two years of experience; the candidate has been in a software engineer role since 2024 plus a 2023 degree, so actual professional experience is likely under two years, which is a minor gap but not disqualifying given strong hands-on project and work experience. Remote work poses no stated conflict. Overall this is a strong stack and role match with only a slight experience-level shortfall.",
+      "reasoning_match": null,
+      "draft_verified": true,
+      "draft_message": "I am excited to apply for the Backend Engineer role. I built REST APIs in Python and FastAPI backed by PostgreSQL. I reduced API latency by an estimated 30% by fixing PostgreSQL indexing issues. I am a Software Engineer at Example Labs since 2024. I look forward to hearing from you."
+    },
+    {
+      "url": "https://example.com/jobs/2",
+      "expected_qualified": true,
+      "predicted_qualified": true,
+      "fit_score": 0.88,
+      "fit_reasoning": "The posting asks for Python services and a React frontend, which closely matches the candidate's core stack (Python, FastAPI, PostgreSQL, React, Docker) and real project experience (REST APIs, 12 shipped React features, latency optimization work). The remote and junior/mentorship framing fits the candidate's level, since they graduated in 2023 and have been working professionally only since 2024 \u2014 still early-career, so a junior role with mentoring is an appropriate and likely slightly conservative fit rather than a mismatch. No red flags like unrealistic seniority requirements or unrelated tech stack. The posting is brief and lacks details on compensation or specific seniority requirements, which keeps this from being a perfect 1.0, but overall it's a strong alignment of skills and experience level.",
+      "reasoning_match": null,
+      "draft_verified": true,
+      "draft_message": "I am excited to apply for the Junior Software Engineer role. I built REST APIs in Python and FastAPI backed by PostgreSQL. I shipped 12 React features end-to-end, deployed with Docker. I look forward to hearing from you."
+    },
+    {
+      "url": "https://example.com/jobs/3",
+      "expected_qualified": true,
+      "predicted_qualified": true,
+      "fit_score": 0.9,
+      "fit_reasoning": "The posting asks for a Software Engineer to maintain Python data pipelines on PostgreSQL with automated tests, remote. This matches the candidate closely: current role as Software Engineer, direct experience with Python data pipelines and automated testing (project-pipeline), strong PostgreSQL experience including performance tuning (exp-latency), and REST API/backend work in Python (exp-api). Skills list explicitly includes Python and PostgreSQL. No location constraint issue since it's remote. The only minor gap is that the posting is light on detail (no seniority or compensation info), and the candidate's experience with data pipelines is from a personal project rather than professional role, but it's still directly relevant. No red flags or prompt injection attempts in the posting itself beyond plain text. Overall a strong match.",
+      "reasoning_match": null,
+      "draft_verified": true,
+      "draft_message": "I am excited to apply for the Software Engineer role. I maintained Python data pipelines with automated tests as a personal project. I built REST APIs in Python and FastAPI backed by PostgreSQL. I reduced API latency by an estimated 30% by fixing PostgreSQL indexing issues. I look forward to hearing from you."
+    },
+    {
+      "url": "https://example.com/jobs/4",
+      "expected_qualified": true,
+      "predicted_qualified": true,
+      "fit_score": 0.9,
+      "fit_reasoning": "The posting asks for a Full Stack Developer working with React and Python, deployed with Docker, remote. The candidate has direct hands-on experience with all these core technologies: shipped 12 React features end-to-end, built REST APIs in Python (FastAPI), and deployed with Docker. The candidate's broader skill set (PostgreSQL, TypeScript, AWS) further supports full-stack capability. No seniority level or specific years of experience are stated in the posting, and the candidate's ~1-2 years of professional experience plus relevant personal projects and degree seem reasonably aligned for a full stack developer role, though not explicitly senior. No red flags or prompt injection concerns beyond standard text. Overall this is a strong stack and role match with only minor uncertainty due to lack of detail on seniority or compensation expectations.",
+      "reasoning_match": null,
+      "draft_verified": true,
+      "draft_message": "I am excited to apply for the Full Stack Developer role. I shipped 12 React features end-to-end, deployed with Docker. I also built REST APIs in Python and FastAPI backed by PostgreSQL. I look forward to hearing from you."
+    },
+    {
+      "url": "https://example.com/jobs/5",
+      "expected_qualified": false,
+      "predicted_qualified": false,
+      "fit_score": 0.05,
+      "fit_reasoning": "The posting requires a Principal Engineer with fifteen years of experience and leadership over a 40-engineer organization. The candidate has under two years of professional experience (since 2024, fresh graduate from 2023) and no evidence of management or organizational leadership experience. This is an extreme seniority mismatch - the role requires roughly 13+ more years of experience than the candidate has, and demands large-scale people management skills not present in the candidate's background. While the candidate's technical stack (Python, FastAPI, PostgreSQL, React, Docker, AWS) could be relevant to engineering work in general, the core requirements of this posting (seniority and leadership scope) make it entirely unsuitable for this candidate at this career stage.",
+      "reasoning_match": true,
+      "draft_verified": null
+    },
+    {
+      "url": "https://example.com/jobs/6",
+      "expected_qualified": false,
+      "predicted_qualified": false,
+      "fit_score": 0.03,
+      "fit_reasoning": "The posting requires 8 years of experience in embedded C firmware development for automotive microcontrollers. The candidate's background is entirely in web/backend development (Python, FastAPI, PostgreSQL, React, TypeScript, Docker, AWS) with only about 1-2 years of professional experience since graduating in 2023. There is no evidence of any embedded systems, C programming, firmware, or hardware/microcontroller experience in the candidate's facts. This is a fundamental skill mismatch (web/cloud stack vs. embedded C) as well as a severe seniority/experience gap (junior-level candidate vs. 8 years senior requirement). This is an essentially no-fit role.",
+      "reasoning_match": true,
+      "draft_verified": null
+    },
+    {
+      "url": "https://example.com/jobs/7",
+      "expected_qualified": false,
+      "predicted_qualified": false,
+      "fit_score": 0.05,
+      "fit_reasoning": "The posting requires native iOS development with Swift and SwiftUI and three years of App Store shipping experience. The candidate's background is entirely in Python, FastAPI, PostgreSQL, React, TypeScript, Docker, and AWS\u2014web/backend and frontend web development with no evidence of Swift, SwiftUI, or mobile app development. There is a complete stack mismatch and no relevant experience in iOS development, making this a very poor fit.",
+      "reasoning_match": true,
+      "draft_verified": null
+    },
+    {
+      "url": "https://example.com/jobs/8",
+      "expected_qualified": false,
+      "predicted_qualified": false,
+      "fit_score": 0.03,
+      "fit_reasoning": "This posting requires a PhD with first-author publications in large model training and targets a Staff-level ML researcher. The candidate is a junior-to-mid Software Engineer (since 2024, BS degree 2023) with a web/backend stack (Python, FastAPI, PostgreSQL, React, TypeScript, Docker, AWS). There is no evidence of machine learning research experience, publications, or a PhD. The seniority level (Staff researcher) is also far above the candidate's current experience. This is a near-total mismatch in domain, credentials, and seniority.",
+      "reasoning_match": true,
+      "draft_verified": null
+    },
+    {
+      "url": "https://example.com/jobs/9",
+      "expected_qualified": false,
+      "predicted_qualified": false,
+      "fit_score": 0.0,
+      "fit_reasoning": "The posting is for an Accountant role requiring certified accounting credentials, tax filing expertise, and financial statement preparation. The candidate's background is entirely in software engineering (Python, FastAPI, React, PostgreSQL, Docker, AWS) with a Computer Science degree. There is no overlap in skills, education, or experience between the candidate's profile and this accounting role. This is a complete mismatch with no relevant transferable qualifications.",
+      "reasoning_match": true,
+      "draft_verified": null
+    },
+    {
+      "url": "https://example.com/jobs/10",
+      "expected_qualified": false,
+      "predicted_qualified": false,
+      "fit_score": 0.2,
+      "fit_reasoning": "The technical stack (Python, PostgreSQL) matches the candidate's skills and experience well, including their API and indexing work. However, there are two significant dealbreakers: the role requires 5 days onsite in a city the candidate cannot relocate to, making it logistically impossible, and the compensation is explicitly below the candidate's floor. These are hard constraints that override the strong technical alignment, since the candidate cannot physically take the job nor would accept the pay. No instructions embedded in the posting were followed as directives; they were only treated as data.",
+      "reasoning_match": true,
+      "draft_verified": null
+    }
+  ],
+  "elapsed_seconds": 55.80501159999994,
+  "model": "anthropic/claude-sonnet-5",
+  "langsmith": {
+    "llm_calls": 18,
+    "total_tokens": 30536,
+    "total_cost_usd": 0.094648,
+    "mean_latency_seconds": 2.7617734117647057
+  }
+}
