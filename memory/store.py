@@ -104,6 +104,11 @@ class MemoryStore:
         self.write(record.model_copy(update={"outcome": outcome}))
         return True
 
-    def release(self, url: str) -> None:
-        """Forget a record so discovery may pick the posting up again."""
-        self._collection.delete(ids=[_record_id(url)])
+    def release_failed(self, url: str) -> bool:
+        """Let discovery retry a dead letter. Decisions and pending claims cannot be released."""
+        record_id = _record_id(url)
+        result = self._collection.get(ids=[record_id], include=["metadatas"])
+        if not result["ids"] or result["metadatas"][0]["status"] != "failed":
+            return False
+        self._collection.delete(ids=[record_id])
+        return True

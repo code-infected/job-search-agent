@@ -80,6 +80,16 @@ def test_health_and_dashboard_are_open_and_carry_no_data(client):
     assert "frame-ancestors 'none'" in page.headers["content-security-policy"]
 
 
+@pytest.mark.parametrize("path", ["/docs", "/redoc", "/openapi.json"])
+def test_api_schema_is_not_exposed(client, path):
+    assert client.get(path).status_code == 404
+
+
+def test_release_of_a_non_dead_letter_is_not_found(client):
+    body = {"url": "https://example.com/x"}
+    assert client.post("/dead-letters/release", json=body, headers=AUTH).status_code == 404
+
+
 def test_dashboard_never_renders_with_inner_html():
     source = Path("api/dashboard.html").read_text(encoding="utf-8")
     assert "innerHTML =" not in source

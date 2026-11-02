@@ -69,7 +69,13 @@ def create_app(
         yield
         app.state.checkpointer.conn.close()
 
-    app = FastAPI(title="Job Search Agent Review Queue", lifespan=lifespan)
+    app = FastAPI(
+        title="Job Search Agent Review Queue",
+        lifespan=lifespan,
+        docs_url=None,
+        redoc_url=None,
+        openapi_url=None,
+    )
     review_lock = threading.Lock()
     batch_lock = threading.Lock()
     bearer = HTTPBearer(auto_error=False)
@@ -159,7 +165,8 @@ def create_app(
 
     @app.post("/dead-letters/release", dependencies=authenticated)
     def release(update: DeadLetterRelease, request: Request) -> dict:
-        request.app.state.store.release(update.url)
+        if not request.app.state.store.release_failed(update.url):
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "no dead letter for this URL")
         return {"status": "released"}
 
     return app

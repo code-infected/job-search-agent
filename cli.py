@@ -16,6 +16,11 @@ from runner import (
 )
 
 
+def printable(value: object) -> str:
+    """Stored text derives from the open web, so it must not reach the terminal as escapes."""
+    return "".join(ch if ch.isprintable() else " " for ch in str(value))
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
@@ -35,7 +40,7 @@ def main() -> None:
 
     if args.command == "run":
         for values in run_batch(deps, checkpointer, settings.max_postings_per_run):
-            print(values["approval_status"], values["fit_score"], values["posting_url"])
+            print(values["approval_status"], values["fit_score"], printable(values["posting_url"]))
         return
 
     deps.postings = iter(())
@@ -52,9 +57,9 @@ def main() -> None:
         reviews = stale_reviews(reviews, settings.review_stale_hours)
     for review in reviews:
         print(review.run_id, review.created_at, review.payload["fit_score"])
-        print(f"  {review.payload['posting_url']}")
-        print(f"  {review.payload['fit_reasoning']}")
-        print(f"  Draft: {review.payload['draft_message']}")
+        print(f"  {printable(review.payload['posting_url'])}")
+        print(f"  {printable(review.payload['fit_reasoning'])}")
+        print(f"  Draft: {printable(review.payload['draft_message'])}")
     print(f"{len(reviews)} waiting")
 
 
