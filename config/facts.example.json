@@ -1,0 +1,12 @@
+{
+  "candidate_name": "Alex Example",
+  "facts": [
+    {"id": "role-current", "category": "experience", "text": "Software Engineer at Example Labs since 2024."},
+    {"id": "exp-api", "category": "experience", "text": "Built REST APIs in Python and FastAPI backed by PostgreSQL."},
+    {"id": "exp-frontend", "category": "experience", "text": "Shipped 12 React features end-to-end, deployed with Docker."},
+    {"id": "exp-latency", "category": "experience", "text": "Reduced API latency by an estimated 30% by fixing PostgreSQL indexing issues."},
+    {"id": "project-pipeline", "category": "project", "text": "Maintained Python data pipelines with automated tests as a personal project."},
+    {"id": "edu-degree", "category": "education", "text": "Bachelor of Computer Science, Example University, 2023."},
+    {"id": "skills", "category": "skills", "text": "Skills: Python, TypeScript, React, FastAPI, PostgreSQL, Docker, AWS EC2 and S3."}
+  ]
+}
