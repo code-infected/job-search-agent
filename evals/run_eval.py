@@ -21,8 +21,6 @@ from graph.nodes.fit_score import assess_fit
 from graph.nodes.tailor import UngroundedDraftError, draft_message
 from models import get_chat_model
 
-RESULTS_DIR = Path(__file__).with_name("results")
-
 # Known disqualifier categories, used to check a stated reason names the real one.
 DISQUALIFIERS: dict[str, tuple[str, ...]] = {
     "stack mismatch": ("stack", "technolog", "language", "framework", "tool"),
@@ -160,6 +158,12 @@ def main() -> None:
     parser.add_argument("--target-profile", default="Any role matching the candidate facts.")
     parser.add_argument("--limit", type=int)
     parser.add_argument("--output", default="latest", help="results file name, without extension")
+    parser.add_argument(
+        "--results-dir",
+        type=Path,
+        default=Path("data/eval_results"),
+        help="kept private by default, since real runs contain drafts built from your facts",
+    )
     args = parser.parse_args()
 
     settings = Settings.from_env()
@@ -184,11 +188,11 @@ def main() -> None:
     summary["langsmith"] = langsmith_summary(started_at)
 
     table = render_table(summary, args.tracker.name)
-    RESULTS_DIR.mkdir(exist_ok=True)
-    (RESULTS_DIR / f"{args.output}.json").write_text(
+    args.results_dir.mkdir(parents=True, exist_ok=True)
+    (args.results_dir / f"{args.output}.json").write_text(
         json.dumps(summary, indent=2), encoding="utf-8"
     )
-    (RESULTS_DIR / f"{args.output}.md").write_text(table + "\n", encoding="utf-8")
+    (args.results_dir / f"{args.output}.md").write_text(table + "\n", encoding="utf-8")
     print(table)
 
 
