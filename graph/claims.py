@@ -1,10 +1,13 @@
 """Deterministic claim extraction: traces a draft back to the verified facts store.
 
 No model is involved, so nothing in a scraped posting can influence the result. The check
-fails closed: a sentence counts as a claim about the candidate unless it is recognisably a
-greeting, a sign-off, a courtesy, or a statement about the employer. A claim may only use
-vocabulary from the facts store. Terms found only in the posting do not support a claim,
-because borrowing the posting's requirements is the usual way a draft invents experience.
+fails closed. Only a short, closed set of greetings, sign-offs, and closings is exempt, plus
+one opening template whose role and employer must appear in the posting. Every other sentence
+is a claim about the candidate, and may only use vocabulary from the facts store. Terms found
+only in the posting never support a claim, because borrowing a posting's requirements is the
+usual way a draft invents experience.
+
+This is a vocabulary check, not a semantic proof, so the human gate still reads every draft.
 """
 
 import re
@@ -15,33 +18,42 @@ from graph.facts import FactsStore
 
 WORD_RE = re.compile(r"\w[\w+#]*(?:[.\-/]\w[\w+#]*)*")
 NUMBER_RE = re.compile(r"(?<![^\W\d_])\d+(?:[.,]\d+)*")
-URL_OR_EMAIL_RE = re.compile(r"(?:https?://|www\.)\S+|\b[\w.+-]+@[\w-]+\.[\w.-]+", re.IGNORECASE)
-SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?])\s+")
-
-FIRST_PERSON_RE = re.compile(r"\b(i|i'm|i've|i'd|i'll|me|my|mine|myself|we|we've|our)\b", re.I)
-EMPLOYER_RE = re.compile(
-    r"\b(your|you|you're|this (role|position|opening)|the (role|position|team|company))\b", re.I
+LINK_RE = re.compile(
+    r"[a-z][a-z0-9+.-]*://\S+|\bwww\.\S+|[\w.+-]+@[\w-]+\.[\w.-]+"
+    r"|(?<![\w@])(?:[\w-]+\.)+[a-z]{2,}(?:/\S*)?",
+    re.I,
 )
-GREETING_RE = re.compile(r"^(hi|hello|dear|greetings)\b[^.!?\d]*[,:!.]?$", re.I)
+
+GREETING_RE = re.compile(
+    r"^(hi|hello|dear)( there| all| team| hiring team| hiring manager| recruiter"
+    r"| recruiting team)?[,:!.]?$",
+    re.I,
+)
 SIGN_OFF_RE = re.compile(
     r"^(best|best regards|kind regards|warm regards|regards|sincerely|thanks|thank you|cheers"
     r"|yours truly)[,.!]?$",
     re.I,
 )
-COURTESY_RE = re.compile(
-    r"^((i am|i'm) (writing|reaching out|excited|interested|keen|eager|happy|glad|delighted)\b"
-    r"|i would (love|welcome|appreciate|be (glad|happy))\b"
-    r"|i'd (love|welcome|appreciate|be (glad|happy))\b"
-    r"|i look forward\b|looking forward\b|thank you\b|thanks\b|please\b)",
+CLOSING_RE = re.compile(
+    r"^((i look forward|looking forward) to hearing from you"
+    r"|(thank you|thanks) for your (time|consideration))[.!]?$",
     re.I,
 )
-# Words that turn a courtesy or employer sentence into an assertion about the candidate.
-CREDENTIAL_RE = re.compile(
-    r"\b(my|experience\w*|expert\w*|proficien\w*|skill\w*|background|years?|built|led|shipped"
-    r"|managed|designed|developed|deployed|certifi\w*|degree|track record|candidate|applicant"
-    r"|familiar\w*|knowledge|worked)\b",
+OPENING_RE = re.compile(
+    r"^(?:i am|i'm) (?:excited|writing|keen|eager|happy|glad|delighted|interested) to apply for "
+    r"(?:the )?(?P<role>[^,;:]{1,80}?)(?: role| position| opening)?"
+    r"(?: at (?P<employer>[^,;:]{1,60}?))?[.!]?$",
     re.I,
 )
+COMPARATOR_RE = re.compile(
+    r"\b(over|under|above|below|at least|at most|more than|less than|fewer than|nearly|almost"
+    r"|up to)\s+\d",
+    re.I,
+)
+# A figure's fact may hedge it. Dropping the hedge would turn an estimate into a claim.
+QUALIFIERS = ("estimated", "approximately", "roughly", "around", "targeting")
+DISALLOWED_CATEGORIES = frozenset({"Cc", "Cf", "Cn", "Co", "So"})
+ALLOWED_CONTROLS = frozenset("\n\r\t")
 
 STOPWORDS = frozenset(
     "a about above across after all also am an and any are as at be because been being both "
@@ -80,6 +92,9 @@ def _stem(word: str) -> str:
     return word
 
 
+GENERIC_STEMS = frozenset(_stem(word) for word in GENERIC_WORDS | STOPWORDS)
+
+
 def _words(text: str) -> list[str]:
     return WORD_RE.findall(unicodedata.normalize("NFKC", text))
 
@@ -97,93 +112,119 @@ def _vocabulary(text: str) -> set[str]:
     return vocabulary
 
 
-def split_sentences(text: str) -> list[str]:
-    sentences = []
-    for line in unicodedata.normalize("NFKC", text).splitlines():
-        line = line.strip().lstrip("-*• ").strip()
-        if line:
-            sentences += [part.strip() for part in SENTENCE_SPLIT_RE.split(line) if part.strip()]
-    return sentences
-
-
-def _is_context(sentence: str) -> bool:
-    if CREDENTIAL_RE.search(sentence):
-        return False
-    if COURTESY_RE.search(sentence):
-        return True
-    return bool(EMPLOYER_RE.search(sentence)) and not FIRST_PERSON_RE.search(sentence)
-
-
-def _unknown_context_terms(sentence: str, allowed: set[str]) -> list[str]:
-    """Numbers and proper or technical terms in a context sentence must exist somewhere."""
-    terms = [number.replace(",", "") for number in NUMBER_RE.findall(sentence)]
-    for index, word in enumerate(_words(sentence)):
-        looks_specific = any(ch.isupper() for ch in word[1:]) or (word[0].isupper() and index > 0)
-        if looks_specific and word.lower() not in STOPWORDS:
-            terms += _parts(word)
-    return [term for term in terms if term not in allowed]
-
-
-def _unsupported_numbers(sentence: str, fact_vocabularies: list[set[str]]) -> list[str]:
-    """A figure must sit in one fact alongside the word it quantifies in the sentence."""
-    unsupported = []
-    for match in NUMBER_RE.finditer(sentence):
-        number = match.group().replace(",", "")
-        clause_end = re.search(r"[,;:]", sentence[match.end() :])
-        rest = sentence[match.end() :]
-        after = _claim_terms(rest[: clause_end.start()] if clause_end else rest)
-        before = _claim_terms(sentence[: match.start()])
-        anchors = after[:1] or before[-1:]
-        supported = any(
-            number in vocabulary and (not anchors or anchors[0] in vocabulary)
-            for vocabulary in fact_vocabularies
-        )
-        if not supported:
-            unsupported.append(number)
-    return unsupported
-
-
 def _claim_terms(text: str) -> list[str]:
     terms = []
     for word in _words(text):
         if word.lower() in STOPWORDS or NUMBER_RE.fullmatch(word):
             continue
         terms += [part for part in _parts(word) if not part.isdigit()]
-    generic = {_stem(word) for word in GENERIC_WORDS} | {_stem(word) for word in STOPWORDS}
-    return [term for term in terms if term not in generic]
+    return [term for term in terms if term not in GENERIC_STEMS]
+
+
+def _phrase(text: str) -> str:
+    """Whole words joined by spaces, for matching one phrase inside another."""
+    return " " + " ".join(word.lower() for word in _words(text)) + " "
+
+
+def split_sentences(text: str) -> list[str]:
+    sentences = []
+    for line in unicodedata.normalize("NFKC", text).splitlines():
+        line = line.strip().lstrip("-*• ").strip()
+        if line:
+            parts = re.split(r"(?<=[.!?])\s+|(?<=。)\s*", line)
+            sentences += [part.strip() for part in parts if part.strip()]
+    return sentences
+
+
+def _is_exempt(sentence: str, posting_phrase: str) -> bool:
+    if GREETING_RE.match(sentence) or SIGN_OFF_RE.match(sentence) or CLOSING_RE.match(sentence):
+        return True
+    opening = OPENING_RE.match(sentence)
+    if not opening:
+        return False
+    names = [opening["role"], opening["employer"]]
+    return all(_phrase(name) in posting_phrase for name in names if name)
+
+
+def _preposition_links(text: str) -> set[tuple[str, ...]]:
+    """Links that name an employer, school, or subject, such as 'at Acme' or 'degree of Law'."""
+    words = [word.lower() for word in _words(text)]
+    links: set[tuple[str, ...]] = set()
+    for index, word in enumerate(words):
+        if word not in ("at", "from", "of"):
+            continue
+        following = [item for item in words[index + 1 :] if item not in STOPWORDS]
+        if not following or not _parts(following[0]):
+            continue
+        target = _parts(following[0])[0]
+        if word != "of":
+            links.add((word, target))
+        elif index and words[index - 1] not in STOPWORDS and _parts(words[index - 1]):
+            links.add((_parts(words[index - 1])[-1], word, target))
+    return links
+
+
+def _figure_problems(sentence: str, facts: FactsStore, vocabularies: list[set[str]]) -> list[str]:
+    """A figure's sentence must stay inside one fact that holds it, with the fact's hedges."""
+    lowered = sentence.lower()
+    terms = set(_claim_terms(sentence)) - _vocabulary(facts.candidate_name)
+    problems = []
+    for number in {found.replace(",", "") for found in NUMBER_RE.findall(sentence)}:
+        owners = [
+            fact.text.lower()
+            for fact, vocabulary in zip(facts.facts, vocabularies, strict=True)
+            if number in vocabulary and terms <= vocabulary
+        ]
+        if not owners:
+            problems.append(f"figure {number} is not supported by a single fact")
+        elif not any(
+            all(
+                word in lowered or not re.search(rf"\b{word}\s+\S*{re.escape(number)}", owner)
+                for word in QUALIFIERS
+            )
+            for owner in owners
+        ):
+            problems.append(f"figure {number} dropped its qualifier")
+    fact_text = " ".join(fact.text.lower() for fact in facts.facts)
+    for match in COMPARATOR_RE.finditer(sentence):
+        if match.group().lower() not in fact_text:
+            problems.append(f"comparator not in facts: {match.group()!r}")
+    return problems
 
 
 def verify_draft(draft: str, facts: FactsStore, posting_text: str) -> list[Violation]:
     """Return every sentence of `draft` not traceable to the facts store. Empty means clean."""
-    fact_vocabularies = [_vocabulary(fact.text) for fact in facts.facts]
-    fact_vocabulary = set().union(*fact_vocabularies) | _vocabulary(facts.candidate_name)
-    context_vocabulary = fact_vocabulary | _vocabulary(posting_text)
-    fact_text = " ".join(fact.text for fact in facts.facts)
+    vocabularies = [_vocabulary(fact.text) for fact in facts.facts]
+    allowed_terms = set().union(*vocabularies) | _vocabulary(facts.candidate_name)
+    allowed_links = set().union(*(_preposition_links(fact.text) for fact in facts.facts))
+    fact_text = " ".join(fact.text for fact in facts.facts).lower()
+    posting_phrase = _phrase(posting_text)
 
     violations = []
+    normalized = unicodedata.normalize("NFKC", draft)
+    hidden = sorted(
+        {
+            f"U+{ord(ch):04X}"
+            for ch in normalized
+            if unicodedata.category(ch) in DISALLOWED_CATEGORIES and ch not in ALLOWED_CONTROLS
+        }
+    )
+    if hidden:
+        violations.append(Violation(draft[:60], f"disallowed characters: {hidden}"))
+
     for sentence in split_sentences(draft):
-        for link in URL_OR_EMAIL_RE.findall(sentence):
-            if link.rstrip(".,)") not in fact_text:
+        for link in LINK_RE.findall(sentence):
+            if link.rstrip(".,)").lower() not in fact_text:
                 violations.append(Violation(sentence, f"link or address not in facts: {link}"))
-
-        if GREETING_RE.match(sentence) or SIGN_OFF_RE.match(sentence):
-            continue
-        if _is_context(sentence):
-            unknown = _unknown_context_terms(sentence, context_vocabulary)
-            if unknown:
-                violations.append(
-                    Violation(
-                        sentence, f"terms in neither posting nor facts: {sorted(set(unknown))}"
-                    )
-                )
+        if _is_exempt(sentence, posting_phrase):
             continue
 
-        unknown = [term for term in _claim_terms(sentence) if term not in fact_vocabulary]
+        unknown = sorted({term for term in _claim_terms(sentence) if term not in allowed_terms})
         if unknown:
-            violations.append(
-                Violation(sentence, f"claim terms not in facts: {sorted(set(unknown))}")
-            )
-        numbers = _unsupported_numbers(sentence, fact_vocabularies)
-        if numbers:
-            violations.append(Violation(sentence, f"figures not supported by a fact: {numbers}"))
+            violations.append(Violation(sentence, f"claim terms not in facts: {unknown}"))
+        unlinked = sorted(" ".join(link) for link in _preposition_links(sentence) - allowed_links)
+        if unlinked:
+            violations.append(Violation(sentence, f"phrases not in any fact: {unlinked}"))
+        for problem in _figure_problems(sentence, facts, vocabularies):
+            violations.append(Violation(sentence, problem))
     return violations
