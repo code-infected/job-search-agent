@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Review Queue</title>
+<style>
+  :root { --bg: #f7f7f5; --card: #fff; --ink: #1c1c1a; --muted: #66665f; --line: #ddddd6; --accent: #2b5fa8; --bad: #a83232; }
+  @media (prefers-color-scheme: dark) { :root { --bg: #171716; --card: #21211f; --ink: #ecece7; --muted: #a0a097; --line: #383835; --accent: #7fa8e0; --bad: #e08a8a; } }
+  * { box-sizing: border-box; }
+  body { margin: 0 auto; max-width: 760px; padding: 24px 16px; background: var(--bg); color: var(--ink); font: 16px/1.5 system-ui, sans-serif; }
+  h1 { font-size: 22px; margin: 0 0 16px; }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 16px; }
+  input, textarea { flex: 1; min-width: 0; padding: 8px; font: inherit; color: inherit; background: var(--card); border: 1px solid var(--line); border-radius: 6px; }
+  textarea { width: 100%; }
+  button { padding: 8px 14px; font: inherit; color: var(--accent); background: none; border: 1px solid currentColor; border-radius: 6px; cursor: pointer; }
+  button.reject { color: var(--bad); }
+  article { padding: 16px; margin-bottom: 16px; background: var(--card); border: 1px solid var(--line); border-radius: 8px; }
+  article h2 { margin: 0 0 4px; font-size: 16px; overflow-wrap: anywhere; }
+  pre { margin: 8px 0; white-space: pre-wrap; font: inherit; }
+  .muted { color: var(--muted); font-size: 14px; }
+  details { margin: 8px 0; }
+</style>
+</head>
+<body>
+<h1>Review Queue</h1>
+<div class="row">
+  <input id="token" type="password" placeholder="Review API token" autocomplete="off" aria-label="Review API token">
+  <button id="load">Load</button>
+  <button id="run">Start run</button>
+</div>
+<p id="status" class="muted" role="status"></p>
+<main id="queue"></main>
+<template id="card">
+  <article>
+    <h2 class="url"></h2>
+    <p class="muted score"></p>
+    <pre class="reasoning"></pre>
+    <details><summary>Posting</summary><pre class="posting"></pre></details>
+    <strong>Draft</strong>
+    <pre class="draft"></pre>
+    <div class="row"><textarea class="reason" rows="2" placeholder="Reason (required to reject)" aria-label="Reason"></textarea></div>
+    <div class="row">
+      <button class="approve">Approve</button>
+      <button class="reject">Reject</button>
+    </div>
+  </article>
+</template>
+<script>
+  // Posting text is untrusted, so everything is rendered with textContent, never innerHTML.
+  const queue = document.getElementById("queue");
+  const statusLine = document.getElementById("status");
+  const tokenInput = document.getElementById("token");
+
+  async function call(path, options = {}) {
+    const response = await fetch(path, {
+      ...options,
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${tokenInput.value}` },
+    });
+    if (!response.ok) {
+      const body = await response.json().catch(() => ({}));
+      throw new Error(typeof body.detail === "string" ? body.detail : `Request failed: ${response.status}`);
+    }
+    return response.json();
+  }
+
+  function renderCard(review) {
+    const card = document.getElementById("card").content.cloneNode(true);
+    const { posting_url, fit_score, fit_reasoning, posting_text, draft_message } = review.payload;
+    card.querySelector(".url").textContent = posting_url;
+    card.querySelector(".score").textContent = `Fit ${Number(fit_score).toFixed(2)}, waiting since ${review.created_at}`;
+    card.querySelector(".reasoning").textContent = fit_reasoning;
+    card.querySelector(".posting").textContent = posting_text;
+    card.querySelector(".draft").textContent = draft_message;
+    const reason = card.querySelector(".reason");
+    const decide = (decision) => async () => {
+      try {
+        await call(`/reviews/${encodeURIComponent(review.run_id)}`, {
+          method: "POST",
+          body: JSON.stringify({ decision, reason: reason.value || null }),
+        });
+        await load();
+      } catch (error) {
+        statusLine.textContent = error.message;
+      }
+    };
+    card.querySelector(".approve").addEventListener("click", decide("approved"));
+    card.querySelector(".reject").addEventListener("click", decide("rejected"));
+    return card;
+  }
+
+  async function load() {
+    try {
+      const reviews = await call("/reviews");
+      queue.replaceChildren(...reviews.map(renderCard));
+      statusLine.textContent = reviews.length ? `${reviews.length} waiting` : "Nothing is waiting for review.";
+    } catch (error) {
+      statusLine.textContent = error.message;
+    }
+  }
+
+  document.getElementById("load").addEventListener("click", load);
+  document.getElementById("run").addEventListener("click", async () => {
+    try {
+      await call("/runs", { method: "POST" });
+      statusLine.textContent = "Run started. Load again shortly.";
+    } catch (error) {
+      statusLine.textContent = error.message;
+    }
+  });
+</script>
+</body>
+</html>
