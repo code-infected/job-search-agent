@@ -1,13 +1,16 @@
 """Discovery: pulls postings from the curated query list. Makes no model call."""
 
 import html
+import ipaddress
 import logging
 import re
+import socket
 import time
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, Optional
+from urllib.parse import urlsplit
 
 import httpx
 from bs4 import BeautifulSoup
@@ -19,6 +22,10 @@ from memory.store import MemoryStore
 logger = logging.getLogger(__name__)
 
 MAX_POSTING_CHARS = 20_000
+MAX_MARKUP_CHARS = 1_000_000
+MAX_RESPONSE_BYTES = 50_000_000
+MAX_URL_CHARS = 2000
+REQUEST_DEADLINE_SECONDS = 90.0
 MAX_ATTEMPTS = 4
 MAX_RETRY_WAIT_SECONDS = 60.0
 USER_AGENT = "job-search-agent/1.0"
@@ -60,8 +67,30 @@ class Posting:
     text: str
 
 
+def is_safe_posting_url(url: object) -> bool:
+    """A posting URL comes from a remote board and is later written into the draft file."""
+    if not isinstance(url, str) or len(url) > MAX_URL_CHARS:
+        return False
+    if re.search(r"[\s\x00-\x1f\x7f]", url):
+        return False
+    parts = urlsplit(url)
+    return parts.scheme in ("http", "https") and bool(parts.hostname)
+
+
+def _posting_text(title: object, location: object, body: str) -> str:
+    return f"{title}\nLocation: {location}\n\n{body}"[:MAX_POSTING_CHARS]
+
+
+def reject_internal_address(request: httpx.Request) -> None:
+    """Runs on every hop, so a public page cannot redirect the fetch to an internal address."""
+    host = request.url.host
+    addresses = {info[4][0] for info in socket.getaddrinfo(host, request.url.port or 443)}
+    if not addresses or not all(ipaddress.ip_address(addr).is_global for addr in addresses):
+        raise ValueError(f"refusing to fetch non-public address: {host}")
+
+
 def html_to_text(markup: str) -> str:
-    soup = BeautifulSoup(markup, "html.parser")
+    soup = BeautifulSoup(markup[:MAX_MARKUP_CHARS], "html.parser")
     for element in soup(["script", "style", "noscript", "template"]):
         element.decompose()
     return re.sub(r"\n{3,}", "\n\n", soup.get_text("\n", strip=True))[:MAX_POSTING_CHARS]
@@ -77,7 +106,10 @@ class PoliteClient:
         sleep: Callable[[float], None] = time.sleep,
     ) -> None:
         self._client = client or httpx.Client(
-            timeout=20.0, follow_redirects=True, headers={"User-Agent": USER_AGENT}
+            timeout=20.0,
+            follow_redirects=True,
+            headers={"User-Agent": USER_AGENT},
+            event_hooks={"request": [reject_internal_address]},
         )
         self._delay = delay_seconds
         self._sleep = sleep
@@ -89,13 +121,33 @@ class PoliteClient:
             if wait > 0:
                 self._sleep(wait)
             self._last_request = time.monotonic()
-            response = self._client.get(url, params=params)
+            response = self._fetch(url, params)
             if response.status_code != 429 and response.status_code < 500:
                 break
             if attempt + 1 < MAX_ATTEMPTS:
                 self._sleep(min(self._retry_wait(response, attempt), MAX_RETRY_WAIT_SECONDS))
         response.raise_for_status()
         return response
+
+    def _fetch(self, url: str, params: dict[str, str]) -> httpx.Response:
+        """Read a capped body under an overall deadline, which per-read timeouts do not give."""
+        deadline = time.monotonic() + REQUEST_DEADLINE_SECONDS
+        body = bytearray()
+        with self._client.stream("GET", url, params=params) as response:
+            for chunk in response.iter_bytes():
+                body += chunk
+                if len(body) > MAX_RESPONSE_BYTES:
+                    raise ValueError(f"response too large: {url}")
+                if time.monotonic() > deadline:
+                    raise ValueError(f"response too slow: {url}")
+            kept = ("content-type", "retry-after")
+            headers = {key: value for key, value in response.headers.items() if key in kept}
+            return httpx.Response(
+                response.status_code,
+                headers=headers,
+                content=bytes(body),
+                request=response.request,
+            )
 
     @staticmethod
     def _retry_wait(response: httpx.Response, attempt: int) -> float:
@@ -121,7 +173,7 @@ def _greenhouse(client: PoliteClient, query: Query) -> Iterator[Posting]:
         location = (job.get("location") or {}).get("name", "")
         if _matches(title, location, query):
             body = html_to_text(html.unescape(job.get("content", "")))
-            yield Posting(job["absolute_url"], f"{title}\nLocation: {location}\n\n{body}")
+            yield Posting(job["absolute_url"], _posting_text(title, location, body))
 
 
 def _lever(client: PoliteClient, query: Query) -> Iterator[Posting]:
@@ -130,8 +182,8 @@ def _lever(client: PoliteClient, query: Query) -> Iterator[Posting]:
         title = job.get("text", "")
         location = (job.get("categories") or {}).get("location", "")
         if _matches(title, location, query):
-            body = job.get("descriptionPlain", "")[:MAX_POSTING_CHARS]
-            yield Posting(job["hostedUrl"], f"{title}\nLocation: {location}\n\n{body}")
+            body = job.get("descriptionPlain", "")
+            yield Posting(job["hostedUrl"], _posting_text(title, location, body))
 
 
 def _page(client: PoliteClient, query: Query) -> Iterator[Posting]:
@@ -145,9 +197,21 @@ def fetch_postings(queries: list[Query], client: PoliteClient) -> Iterator[Posti
     """Yield postings lazily. One failing source is logged and does not stop the others."""
     for query in queries:
         try:
-            yield from FETCHERS[query.source](client, query)
-        except (httpx.HTTPError, ValueError) as exc:
-            logger.error("source %s failed: %s", query.board or query.url, exc)
+            for posting in FETCHERS[query.source](client, query):
+                if is_safe_posting_url(posting.url):
+                    yield posting
+                else:
+                    logger.warning("skipping posting with unsafe URL: %r", posting.url)
+        except (
+            httpx.HTTPError,
+            httpx.InvalidURL,
+            OSError,
+            ValueError,
+            KeyError,
+            TypeError,
+            AttributeError,
+        ) as exc:
+            logger.error("source %s failed: %r", query.board or query.url, exc)
 
 
 def make_discover(postings: Iterator[Posting], store: MemoryStore):

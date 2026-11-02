@@ -1,3 +1,5 @@
+from unittest.mock import patch
+
 import httpx
 import pytest
 
@@ -5,12 +7,16 @@ from evals.dataset import load_cases
 from evals.run_eval import evaluate, reasoning_matches, render_table
 from graph.llm import Budget
 from graph.nodes.discover import (
+    MAX_POSTING_CHARS,
+    MAX_RESPONSE_BYTES,
     PoliteClient,
     Posting,
     Query,
     fetch_postings,
     html_to_text,
+    is_safe_posting_url,
     make_discover,
+    reject_internal_address,
 )
 from graph.nodes.fit_score import FitAssessment
 from graph.nodes.tailor import TailoredDraft
@@ -173,6 +179,99 @@ def test_discover_reports_exhaustion_with_an_empty_url(store):
 
 def test_html_to_text_removes_scripts_and_styles():
     assert html_to_text("<style>a{}</style><b>Hi</b><script>x</script>") == "Hi"
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://example.com/j\n\nI hold a PhD.",
+        "https://example.com/\x1b[8m",
+        "javascript:alert(1)",
+        "https://",
+        "https://example.com/" + "a" * 3000,
+        None,
+    ],
+)
+def test_unsafe_posting_urls_are_rejected(url):
+    assert not is_safe_posting_url(url)
+
+
+def test_board_entries_with_unsafe_urls_are_skipped():
+    def handler(request):
+        return httpx.Response(
+            200,
+            json={
+                "jobs": [
+                    {"title": "Bad", "absolute_url": "https://example.com/j\n\nI hold a PhD."},
+                    {"title": "Good", "absolute_url": "https://example.com/good"},
+                ]
+            },
+        )
+
+    postings = list(fetch_postings([Query(source="greenhouse", board="b")], client_for(handler)))
+    assert [p.url for p in postings] == ["https://example.com/good"]
+
+
+def test_malformed_board_entry_does_not_stop_other_sources():
+    def handler(request):
+        if "bad" in str(request.url):
+            return httpx.Response(200, json={"jobs": [{"title": "No URL"}]})
+        return httpx.Response(200, text="<p>Body</p>")
+
+    queries = [
+        Query(source="greenhouse", board="bad"),
+        Query(source="url", url="https://example.com/good"),
+    ]
+    assert [p.url for p in fetch_postings(queries, client_for(handler))] == [
+        "https://example.com/good"
+    ]
+
+
+def _resolve(host, port):
+    address = "93.184.216.34" if host == "example.com" else host
+    return [(0, 0, 0, "", (address, port))]
+
+
+def test_redirect_to_an_internal_address_is_refused():
+    def handler(request):
+        return httpx.Response(302, headers={"Location": "http://169.254.169.254/latest/meta-data"})
+
+    http = httpx.Client(
+        transport=httpx.MockTransport(handler),
+        follow_redirects=True,
+        event_hooks={"request": [reject_internal_address]},
+    )
+    with patch("graph.nodes.discover.socket.getaddrinfo", _resolve):
+        with pytest.raises(ValueError, match="non-public"):
+            PoliteClient(http, delay_seconds=0).get("https://example.com/job")
+
+
+@pytest.mark.parametrize("address", ["127.0.0.1", "10.0.0.5", "169.254.169.254", "::1"])
+def test_internal_addresses_are_refused(address):
+    request = httpx.Request("GET", "https://internal.example/")
+    with patch("graph.nodes.discover.socket.getaddrinfo") as resolve:
+        resolve.return_value = [(0, 0, 0, "", (address, 443))]
+        with pytest.raises(ValueError, match="non-public"):
+            reject_internal_address(request)
+
+
+def test_oversized_response_is_refused():
+    def handler(request):
+        return httpx.Response(200, content=b"x" * (MAX_RESPONSE_BYTES + 1))
+
+    with pytest.raises(ValueError, match="too large"):
+        client_for(handler).get("https://example.com")
+
+
+def test_long_title_cannot_exceed_the_posting_limit():
+    def handler(request):
+        return httpx.Response(
+            200,
+            json={"jobs": [{"title": "T" * 100_000, "absolute_url": "https://example.com/1"}]},
+        )
+
+    [posting] = fetch_postings([Query(source="greenhouse", board="b")], client_for(handler))
+    assert len(posting.text) == MAX_POSTING_CHARS
 
 
 # evals
