@@ -1,0 +1,31 @@
+{
+  "target_profile": "Describe the roles you want in plain language: titles, seniority, locations, and anything that rules a role out.",
+  "queries": [
+    {
+      "source": "greenhouse",
+      "board": "example-board-token",
+      "keywords": [
+        "engineer",
+        "developer"
+      ],
+      "exclude_keywords": [
+        "manager"
+      ],
+      "locations": [
+        "remote",
+        "example city"
+      ]
+    },
+    {
+      "source": "lever",
+      "board": "example-board-token",
+      "keywords": [
+        "engineer"
+      ]
+    },
+    {
+      "source": "url",
+      "url": "https://example.com/careers/some-posting"
+    }
+  ]
+}
