@@ -35,11 +35,16 @@ Each run handles one posting, in its own checkpointed thread. A batch repeats ru
 
 ### The fact check
 
-`graph/claims.py` uses no model, so a posting cannot influence it. It fails closed: a sentence is treated as a claim about the candidate unless it is recognisably a greeting, sign-off, courtesy, or statement about the employer. Claims may only use vocabulary from the facts store, and each figure must appear in a single fact alongside the word it quantifies. Terms found only in the posting do not support a claim, because borrowing a posting's requirements is the usual way a draft invents experience. Links and email addresses must come from the facts store.
+`graph/claims.py` uses no model, so a posting cannot influence it. It fails closed. Only a closed set of greetings, sign-offs, and closings is exempt, plus one opening template whose role and employer must appear in the posting. Every other sentence is a claim, including any statement about the employer. Claims must follow these rules:
 
-A draft that fails gets one rewrite with the violations as feedback. If it still fails it goes to the dead-letter list and never reaches a reviewer.
+- Words must come from the facts store. Terms found only in the posting do not count, because borrowing a posting's requirements is the usual way a draft invents experience.
+- Phrases such as "at Acme" or "Bachelor of Law" must appear in a single fact.
+- A sentence with a figure must stay inside one fact holding that figure, and keep any hedge such as "estimated" or "targeting".
+- Links, email addresses, and hidden or symbol characters are rejected unless the facts contain them.
 
-This is a vocabulary check, not a semantic proof. It cannot catch two true facts combined into a misleading sentence, which is one reason the human gate exists.
+A draft that fails gets one rewrite with the violations as feedback. If it still fails it goes to the dead-letter list and never reaches a reviewer. The cost of this strictness is that drafts stay close to the wording of your facts and say nothing about the employer beyond naming the role.
+
+This is a vocabulary check, not a semantic proof. "I built PostgreSQL and React." uses only fact vocabulary and passes, even though it misstates both. That is one reason the human gate exists.
 
 ## Setup
 
@@ -106,11 +111,11 @@ Change `MODEL_PROVIDER` and `MODEL_NAME` in `.env`, set the matching key, and re
 ## Evaluation
 
 ```bash
-python -m evals.run_eval --output sample_run
+python -m evals.run_eval --output sample_run --results-dir evals/results
 python -m evals.run_eval --tracker path/to/tracker.csv --facts data/facts.json --target-profile "..."
 ```
 
-A tracker is a CSV of past human decisions with the columns `url`, `posting_text`, `decision`, and `reason`. It is only an answer key for measuring accuracy. The agent does not need one to run.
+A tracker is a CSV of past human decisions with the columns `url`, `posting_text`, `decision`, and `reason`. It is only an answer key for measuring accuracy. The agent does not need one to run. Results go to `data/eval_results/` by default, which stays private, since a real run contains drafts built from your facts.
 
 Latest run, on the synthetic sample in `evals/sample_tracker.csv`:
 
@@ -119,8 +124,8 @@ Latest run, on the synthetic sample in `evals/sample_tracker.csv`:
 | Fit agreement with logged decision | 100% (10 scored) |
 | Reasoning names the logged disqualifier | 100% (6 checked) |
 | Drafts passing the fact check | 4 of 4 |
-| Tokens | 26339 in, 4197 out |
-| LangSmith | 18 calls, $0.0946, mean latency 2.8s |
+| Tokens | 23079 in, 3637 out |
+| LangSmith | 15 calls, $0.0767, mean latency 3.1s |
 
 Model: `anthropic/claude-sonnet-5`. Raw output is in `evals/results/`.
 
@@ -138,6 +143,7 @@ Run the unit tests with `pytest`. They use a scripted model and need no keys or 
 | Review left unanswered | Listed by the digest after `REVIEW_STALE_HOURS` |
 | Spend ceiling reached | The batch stops. `MAX_COST_PER_RUN_USD` needs `MODEL_*_USD_PER_MTOK` set, otherwise only `MAX_TOKENS_PER_RUN` applies |
 | Job board rate limit | Minimum delay between requests, backoff on 429 and 5xx, honouring `Retry-After` |
+| Hostile or broken source | Non-public addresses are refused on every redirect hop, responses are size and time capped, posting URLs are validated, and one bad source does not stop the others |
 
 ## Known limitations
 
@@ -145,6 +151,8 @@ Run the unit tests with `pytest`. They use a scripted model and need no keys or 
 - **Stuck claims:** a process killed between discovery and a terminal state leaves its posting marked in progress, so it will not be rediscovered until released.
 - **ChromaDB advisories:** `pip-audit` reports PYSEC-2026-311, 3813, 3814, and 3815 against `chromadb`, with no fixed release. All four concern Chroma's HTTP server. This project uses the embedded client and never starts that server, so they are not reachable here. Do not expose a Chroma server with this version.
 - **Tracing** sends posting text and candidate facts to LangSmith. Set `LANGSMITH_TRACING=false` to keep them local.
+- **Address filtering** resolves a host before connecting, so a small DNS-rebinding window remains.
+- **Hashes:** the lockfile pins versions but not hashes, because it is resolved on one platform and used on another.
 
 ## Deliberately out of scope
 
