@@ -218,7 +218,12 @@ def test_adzuna_errors_never_log_the_key(monkeypatch, caplog):
 def test_the_example_search_config_is_valid():
     path = Path(__file__).parents[1] / "config" / "search.example.json"
     config = SearchConfig.model_validate_json(path.read_text(encoding="utf-8"))
-    assert {query.source for query in config.queries} >= {"ashby", "remotive", "adzuna"}
+    assert {query.source for query in config.resolved_queries()} >= {
+        "workday",
+        "remotive",
+        "adzuna",
+        "directory",
+    }
 
 
 def test_top_level_filters_apply_unless_a_query_sets_its_own():

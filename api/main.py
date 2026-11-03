@@ -24,10 +24,17 @@ from api.setup import router as setup_router
 from api.setup import setup_status
 from config import ENV_PATH, Settings
 from graph.build import Dependencies, open_checkpointer
-from graph.nodes.discover import FetchLog
+from graph.nodes.discover import DIRECTORY_SYSTEMS, FetchLog
+from graph.sources.directory import BoardDirectory
 from jobs import job_rows, to_csv
 from memory.store import MemoryStore
-from runner import build_dependencies, build_read_only_graph, pending_reviews, run_batch
+from runner import (
+    build_dependencies,
+    build_read_only_graph,
+    directory_path,
+    pending_reviews,
+    run_batch,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -108,6 +115,34 @@ def create_app(
         app.state.batch_thread.start()
         return True
 
+    def start_directory_build(app: FastAPI) -> bool:
+        """Read the crawl index for every board system. Shares the run lock, since both write
+        the directory file."""
+        if not batch_lock.acquire(blocking=False):
+            return False
+        progress.update(
+            running=True,
+            started_at=_now(),
+            finished_at=None,
+            message="Building the list of companies from Common Crawl. This takes a few minutes.",
+        )
+
+        def build_list() -> None:
+            try:
+                directory = BoardDirectory(directory_path(app.state.settings))
+                counts = directory.refresh(list(DIRECTORY_SYSTEMS))
+                progress["message"] = f"Company list ready: {sum(counts.values())} companies."
+            except Exception as error:
+                logger.exception("directory build failed")
+                progress["message"] = f"Building the company list failed: {error}"
+            finally:
+                progress.update(running=False, finished_at=_now())
+                batch_lock.release()
+
+        app.state.batch_thread = threading.Thread(target=build_list, daemon=True)
+        app.state.batch_thread.start()
+        return True
+
     def scheduled_tick(app: FastAPI) -> bool:
         """Start a run if automatic runs are on, setup is complete, and one is due."""
         hours = app.state.settings.auto_run_hours
@@ -146,6 +181,7 @@ def create_app(
     app.state.settings = settings or Settings.from_env()
     app.state.env_path = env_path
     app.state.start_batch = start_batch
+    app.state.start_directory_build = start_directory_build
     app.state.scheduled_tick = scheduled_tick
     app.include_router(setup_router)
 

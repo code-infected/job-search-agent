@@ -3,14 +3,17 @@
   "keywords": ["engineer", "developer"],
   "exclude_keywords": ["manager"],
   "locations": ["remote", "example city"],
+  "search_terms": ["software engineer", "python developer"],
+  "country": "gb",
+  "where": "Example City",
+  "job_sites": ["remotive", "remoteok", "weworkremotely", "himalayas", "hackernews", "adzuna"],
+  "scan_companies": ["greenhouse", "ashby", "workable"],
+  "companies_per_run": 300,
   "queries": [
     {"source": "greenhouse", "board": "example-board"},
     {"source": "lever", "board": "example-board", "keywords": ["engineer"]},
-    {"source": "ashby", "board": "example-board"},
-    {"source": "workable", "board": "example-board"},
-    {"source": "smartrecruiters", "board": "ExampleBoard"},
-    {"source": "remotive", "search": "python"},
-    {"source": "adzuna", "search": "software developer", "country": "gb"},
+    {"source": "recruitee", "board": "example-board"},
+    {"source": "workday", "url": "https://example.wd5.myworkdayjobs.com/Careers", "search": "engineer"},
     {"source": "url", "url": "https://example.com/careers/some-posting"}
   ]
 }

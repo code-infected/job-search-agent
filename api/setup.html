@@ -35,6 +35,14 @@
   .result { color: var(--muted); font-size: 14px; min-height: 1.5em; margin: 6px 0 0; }
   .item { display: flex; gap: 8px; align-items: center; justify-content: space-between; padding: 8px 0; border-top: 1px solid var(--line); overflow-wrap: anywhere; }
   .item small { color: var(--muted); display: block; }
+  .item button { flex: 0 0 auto; }
+  h3 { font-size: 16px; margin: 20px 0 2px; padding-top: 12px; border-top: 1px solid var(--line); }
+  .choices { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 4px 12px; margin: 8px 0; }
+  .choice { display: flex; gap: 8px; align-items: flex-start; margin: 0; font-weight: 400; }
+  .choice input { width: auto; margin-top: 4px; }
+  .choice small { color: var(--muted); display: block; font-size: 13px; }
+  .key { padding: 10px 0; border-top: 1px solid var(--line); }
+  .key a { color: var(--accent); font-size: 14px; }
 </style>
 </head>
 <body>
@@ -93,11 +101,38 @@
 
 <section id="sources-section">
   <h2>4. Where to look</h2>
-  <p class="hint">Add companies you would like to work for, and searches across many employers.</p>
-  <div id="sources"></div>
+  <p class="hint">Use any mix of the four below. Every run checks all of them, and filters every title by step 3 before any model call, so a wide search costs little.</p>
 
-  <label for="company">Add a company</label>
-  <p class="hint">Type a company name, or paste its careers page link. The agent finds which job board it uses.</p>
+  <h3>Job sites</h3>
+  <p class="hint">Sites listing jobs from many employers. Ticked sites are searched with these terms on every run. Each is credited and linked on the Jobs page, as its terms ask.</p>
+  <label for="search-terms">Search terms</label>
+  <p class="hint">Comma separated, up to ten. Leave empty to use the title words from step 3.</p>
+  <input id="search-terms" placeholder="python developer, backend engineer">
+  <div class="row">
+    <div style="flex: 0 1 200px"><label for="country">Country code</label><input id="country" maxlength="2" placeholder="in"></div>
+    <div style="flex: 1 1 200px"><label for="where">City or region</label><input id="where" maxlength="100" placeholder="Bengaluru"></div>
+  </div>
+  <p class="hint">Used by the sites that search one country or city. Others ignore it.</p>
+  <div id="sites" class="choices"></div>
+  <div class="row">
+    <button id="tick-free">Tick every free site</button>
+  </div>
+
+  <h3>Every company on a job board system</h3>
+  <p class="hint">Most companies post jobs on one of these systems. The agent can check every company it knows on them, a slice per run, oldest first. The company list comes from Common Crawl, a public archive of the web, and is refreshed monthly. Needs title words in step 3.</p>
+  <div id="systems" class="choices"></div>
+  <div class="row">
+    <div style="flex: 0 1 260px"><label for="companies-per-run">Companies to check per run</label><input id="companies-per-run" type="number" min="10" max="5000" step="10"></div>
+  </div>
+  <div class="row">
+    <button id="build-directory">Build the company list now</button>
+  </div>
+  <p class="result" id="directory-result" role="status"></p>
+  <div class="row"><button id="save-sources" class="primary">Save job sites and systems</button></div>
+  <p class="result" id="sites-result" role="status"></p>
+
+  <h3>A specific company</h3>
+  <p class="hint">Type a company name, or paste its careers page link. The agent finds which job board it uses, including Workday careers sites.</p>
   <div class="row">
     <input id="company" placeholder="Company name or careers page link">
     <button id="find">Find</button>
@@ -105,27 +140,23 @@
   <p class="result" id="find-result" role="status"></p>
   <div id="matches"></div>
 
-  <label for="remote-search">Remote jobs from many companies</label>
-  <p class="hint">Searches Remotive. It updates a few times a day, so the agent checks it at most every six hours.</p>
-  <div class="row">
-    <input id="remote-search" placeholder="Search terms, for example python">
-    <button id="add-remote">Add</button>
-  </div>
-
-  <label for="adzuna-search">Job search in one country</label>
-  <p class="hint">Searches Adzuna, which lists jobs from many sites. It needs a free key from developer.adzuna.com, entered under Preferences. Adzuna shares only a short summary of each job, so scores are rougher.</p>
-  <div class="row">
-    <input id="adzuna-country" placeholder="Country code, for example in" maxlength="2" style="flex: 0 1 220px">
-    <input id="adzuna-search" placeholder="Search terms, for example software engineer">
-    <button id="add-adzuna">Add</button>
-  </div>
-
-  <label for="posting-url">A single job posting</label>
+  <h3>A single job posting</h3>
   <div class="row">
     <input id="posting-url" placeholder="https://...">
     <button id="add-url">Add</button>
   </div>
+
+  <h3>Companies and postings added</h3>
+  <div id="sources"></div>
   <p class="result" id="sources-result" role="status"></p>
+</section>
+
+<section id="keys-section">
+  <h2>Keys for more job sites</h2>
+  <p class="hint">Optional. These sites need a free key from their own website. Keys are kept in .env on this computer and never shown again.</p>
+  <div id="keys"></div>
+  <div class="row"><button id="save-keys" class="primary">Save keys</button></div>
+  <p class="result" id="keys-result" role="status"></p>
 </section>
 
 <section id="preferences-section">
@@ -150,12 +181,6 @@
     <div style="flex: 1 1 160px"><label for="price-out">Per million output tokens</label><input id="price-out" type="number" min="0" step="0.01"></div>
   </div>
   <p class="hint">From your provider's pricing page. Without prices, only the token limit applies and cost is not shown.</p>
-  <label for="adzuna-id">Adzuna app ID and key (optional)</label>
-  <div class="row">
-    <input id="adzuna-id" autocomplete="off" placeholder="App ID">
-    <input id="adzuna-key" type="password" autocomplete="off" placeholder="App key">
-  </div>
-  <p class="hint" id="adzuna-hint"></p>
   <div class="row"><button id="save-preferences" class="primary">Save preferences</button></div>
   <p class="result" id="preferences-result" role="status"></p>
 </section>
@@ -184,8 +209,9 @@
 <script>
   // Text from a resume or a job board is untrusted, so it is only ever set with textContent or value.
   const $ = (id) => document.getElementById(id);
-  const SOURCE_NAMES = { greenhouse: "Greenhouse", lever: "Lever", ashby: "Ashby", workable: "Workable", smartrecruiters: "SmartRecruiters", remotive: "Remotive", adzuna: "Adzuna", url: "Posting link" };
-  let search = { target_profile: "", keywords: [], exclude_keywords: [], locations: [], queries: [] };
+  const LABELS = { url: "Posting link", workday: "Workday" };
+  let catalog = { sites: [], boards: [], directory: { systems: [] } };
+  let search = { target_profile: "", keywords: [], exclude_keywords: [], locations: [], queries: [], job_sites: [], search_terms: [], scan_companies: [], companies_per_run: 300 };
 
   async function api(path, method = "GET", body) {
     const options = { method };
@@ -296,22 +322,56 @@
   }));
 
   // What to look for, and where
+  function choice(name, title, detail, checked, disabled) {
+    const label = el("label", undefined, "choice");
+    const box = el("input");
+    box.type = "checkbox";
+    box.value = name;
+    box.checked = checked;
+    box.disabled = disabled;
+    const text = el("span", title);
+    if (detail) text.append(el("small", detail));
+    label.append(box, text);
+    return label;
+  }
+
+  function renderChoices() {
+    $("sites").replaceChildren(...catalog.sites.map((site) => {
+      const needsKey = site.env.length && !site.key_set;
+      const notes = [site.region];
+      if (site.summary_only) notes.push("Summaries only");
+      if (needsKey) notes.push("Needs a free key, below");
+      return choice(site.name, site.label, notes.filter(Boolean).join(". "), search.job_sites.includes(site.name), Boolean(needsKey) && !search.job_sites.includes(site.name));
+    }));
+    $("systems").replaceChildren(...catalog.directory.systems.map((system) => {
+      const known = system.boards ? `${system.boards.toLocaleString()} companies known` : "company list not built yet";
+      return choice(system.name, system.label, known, search.scan_companies.includes(system.name), false);
+    }));
+  }
+
+  const ticked = (id) => [...$(id).querySelectorAll("input:checked")].map((box) => box.value);
+
   function renderSearch() {
     $("profile").value = search.target_profile;
     $("keywords").value = search.keywords.join(", ");
     $("exclude").value = search.exclude_keywords.join(",");
     $("locations").value = search.locations.join(", ");
+    $("search-terms").value = search.search_terms.join(", ");
+    $("country").value = search.country || "";
+    $("where").value = search.where || "";
+    $("companies-per-run").value = search.companies_per_run;
+    renderChoices();
     $("sources").replaceChildren(...search.queries.map((query, index) => {
       const item = el("div", undefined, "item");
-      const label = el("div", query.board || query.search || query.url);
-      const kind = query.source === "adzuna" ? `Adzuna search in ${query.country.toUpperCase()}` : SOURCE_NAMES[query.source];
-      label.append(el("small", kind));
+      const label = el("div", query.board || query.url || query.search);
+      const kind = query.country ? `${LABELS[query.source] || query.source} in ${query.country.toUpperCase()}` : (LABELS[query.source] || query.source);
+      label.append(el("small", query.search && (query.board || query.url) ? `${kind}, searching ${query.search}` : kind));
       const remove = el("button", "Remove", "remove");
       remove.addEventListener("click", () => saveSources(() => search.queries.splice(index, 1), "Removed."));
       item.append(label, remove);
       return item;
     }));
-    if (!search.queries.length) $("sources").append(el("p", "No sources yet.", "muted"));
+    if (!search.queries.length) $("sources").append(el("p", "None yet.", "muted"));
   }
   async function saveSearch() {
     search.target_profile = $("profile").value.trim();
@@ -319,7 +379,18 @@
     search.keywords = list($("keywords").value);
     search.exclude_keywords = listKeepSpaces($("exclude").value);
     search.locations = list($("locations").value);
-    await api("/setup/search", "PUT", search);
+    search.search_terms = $("search-terms").value.split(",").map((term) => term.trim()).filter(Boolean);
+    const country = $("country").value.trim().toLowerCase();
+    if (country && !/^[a-z]{2}$/.test(country)) throw new Error("Enter a two-letter country code, such as in, gb, or us.");
+    search.country = country || null;
+    search.where = $("where").value.trim() || null;
+    search.job_sites = ticked("sites");
+    search.scan_companies = ticked("systems");
+    search.companies_per_run = Number($("companies-per-run").value) || 300;
+    if (search.scan_companies.length && !search.keywords.length) throw new Error("Checking every company needs title words in step 3, or every job on those systems would be scored.");
+    const body = { ...search };
+    for (const key of ["country", "where"]) if (!body[key]) delete body[key];
+    await api("/setup/search", "PUT", body);
     renderSearch();
   }
   async function saveSources(change, message) {
@@ -335,6 +406,32 @@
       $("sources-result").textContent = error.message;
     }
   }
+  $("save-sources").addEventListener("click", (event) => run(event.target, "sites-result", async () => {
+    await saveSearch();
+    const parts = [`${search.job_sites.length} job sites`];
+    if (search.scan_companies.length) parts.push(`every company on ${search.scan_companies.length} systems`);
+    return `Saved: ${parts.join(" and ")}.`;
+  }));
+  $("tick-free").addEventListener("click", () => {
+    for (const box of $("sites").querySelectorAll("input")) {
+      const site = catalog.sites.find((entry) => entry.name === box.value);
+      if (site && !site.env.length) box.checked = true;
+    }
+    $("sites-result").textContent = "Ticked. Save to keep this.";
+  });
+  $("build-directory").addEventListener("click", (event) => run(event.target, "directory-result", async () => {
+    await api("/setup/directory", "POST", {});
+    $("directory-result").textContent = "Building. This takes a few minutes, and the page can stay open or be closed.";
+    for (;;) {
+      await new Promise((resolve) => setTimeout(resolve, 5000));
+      const progress = await api("/status");
+      if (!progress.running) {
+        catalog = await api("/setup/sources");
+        renderChoices();
+        return progress.message;
+      }
+    }
+  }));
   const hasQuery = (query) => search.queries.some((existing) => ["source", "board", "search", "url", "country"].every((key) => existing[key] === query[key]));
   function addQuery(query) {
     if (hasQuery(query)) { $("sources-result").textContent = "Already added."; return; }
@@ -346,10 +443,12 @@
     const matches = await api("/setup/boards", "POST", { query: $("company").value.trim() });
     for (const match of matches) {
       const item = el("div", undefined, "item");
-      const label = el("div", `${match.board} on ${SOURCE_NAMES[match.source]}: ${match.open_jobs} open jobs`);
+      const label = el("div", `${match.board} on ${LABELS[match.source] || match.source}: ${match.open_jobs} open jobs`);
       if (match.sample_titles.length) label.append(el("small", `For example: ${match.sample_titles.join("; ")}`));
       const add = el("button", "Add");
-      add.addEventListener("click", () => addQuery({ source: match.source, board: match.board }));
+      // A Workday site is addressed by its careers link rather than a board name.
+      const query = match.source === "workday" ? { source: "workday", url: match.board } : { source: match.source, board: match.board };
+      add.addEventListener("click", () => addQuery(query));
       item.append(label, add);
       $("matches").append(item);
     }
@@ -357,16 +456,6 @@
       ? "Check the example titles to confirm it is the right company, then add it."
       : "No job board found. Try the company's careers page link, or check the spelling.";
   }));
-  $("add-remote").addEventListener("click", () => {
-    const terms = $("remote-search").value.trim();
-    if (terms) addQuery({ source: "remotive", search: terms });
-  });
-  $("add-adzuna").addEventListener("click", () => {
-    const country = $("adzuna-country").value.trim().toLowerCase();
-    const terms = $("adzuna-search").value.trim();
-    if (!/^[a-z]{2}$/.test(country)) { $("sources-result").textContent = "Enter a two-letter country code, such as in, gb, or us."; return; }
-    if (terms) addQuery({ source: "adzuna", country, search: terms });
-  });
   $("add-url").addEventListener("click", () => {
     const url = $("posting-url").value.trim();
     if (!/^https?:\/\//i.test(url)) { $("sources-result").textContent = "Paste a link starting with https://"; return; }
@@ -381,8 +470,41 @@
     $("max-cost").value = preferences.max_cost_per_run_usd;
     $("price-in").value = preferences.input_usd_per_mtok;
     $("price-out").value = preferences.output_usd_per_mtok;
-    $("adzuna-hint").textContent = preferences.adzuna_set ? "Adzuna keys are saved. Leave these empty to keep them." : "Only needed for Adzuna searches.";
   }
+
+  // Keys for job sites
+  function renderKeys() {
+    $("keys").replaceChildren(...catalog.sites.filter((site) => site.env.length).map((site) => {
+      const block = el("div", undefined, "key");
+      const title = el("div", `${site.label}: ${site.region}`);
+      const link = el("a", "Get a free key");
+      link.href = site.key_url;
+      link.target = "_blank";
+      link.rel = "noopener noreferrer";
+      title.append(document.createTextNode(" "), link);
+      block.append(title);
+      const row = el("div", undefined, "row");
+      for (const name of site.env) {
+        const input = el("input");
+        input.dataset.key = name;
+        input.autocomplete = "off";
+        input.type = name.endsWith("EMAIL") ? "email" : "password";
+        input.placeholder = name.endsWith("EMAIL") ? "Your email, which this site asks for" : name.replace(/_/g, " ").toLowerCase();
+        input.setAttribute("aria-label", name);
+        row.append(input);
+      }
+      block.append(row, el("p", site.key_set ? "Saved. Leave empty to keep it." : "Not set.", "hint"));
+      return block;
+    }));
+  }
+  $("save-keys").addEventListener("click", (event) => run(event.target, "keys-result", async () => {
+    const values = {};
+    for (const input of $("keys").querySelectorAll("input")) if (input.value.trim()) values[input.dataset.key] = input.value.trim();
+    catalog = await api("/setup/keys", "PUT", { values });
+    renderKeys();
+    renderChoices();
+    return "Saved. Sites with a key can now be ticked above.";
+  }));
   $("save-preferences").addEventListener("click", (event) => run(event.target, "preferences-result", async () => {
     const preferences = await api("/setup/preferences", "PUT", {
       fit_score_threshold: Number($("threshold").value),
@@ -391,11 +513,7 @@
       auto_run_hours: Number($("auto-run").value),
       input_usd_per_mtok: Number($("price-in").value),
       output_usd_per_mtok: Number($("price-out").value),
-      adzuna_app_id: $("adzuna-id").value.trim(),
-      adzuna_app_key: $("adzuna-key").value.trim(),
     });
-    $("adzuna-id").value = "";
-    $("adzuna-key").value = "";
     renderPreferences(preferences);
     return "Saved.";
   }));
@@ -418,7 +536,10 @@
 
   (async () => {
     try {
-      const state = await api("/setup/state");
+      const [state, sources] = await Promise.all([api("/setup/state"), api("/setup/sources")]);
+      catalog = sources;
+      for (const source of [...catalog.sites, ...catalog.boards]) LABELS[source.name] = source.label;
+      renderKeys();
       renderChecklist(state);
       renderModel(state.model);
       renderFacts(state.facts);

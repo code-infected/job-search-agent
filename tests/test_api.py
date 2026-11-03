@@ -1,6 +1,7 @@
 import json
 import os
 import shutil
+import threading
 from dataclasses import replace
 from pathlib import Path
 
@@ -299,14 +300,7 @@ def test_search_is_saved_with_new_sources(client, settings):
     }
     assert client.put("/setup/search", json=search).json() == {"saved": 3}
     saved = json.loads(settings.search_config_path.read_text(encoding="utf-8"))
-    assert saved["queries"][2] == {
-        "source": "adzuna",
-        "search": "developer",
-        "country": "in",
-        "keywords": [],
-        "exclude_keywords": [],
-        "locations": [],
-    }
+    assert saved["queries"][2] == {"source": "adzuna", "search": "developer", "country": "in"}
 
 
 @pytest.mark.parametrize(
@@ -322,7 +316,7 @@ def test_invalid_sources_are_refused(client, query):
     assert client.put("/setup/search", json={**SEARCH, "queries": [query]}).status_code == 422
 
 
-def test_preferences_apply_immediately_and_keys_stay_hidden(client, env_file):
+def test_preferences_apply_immediately(client, env_file):
     preferences = {
         "fit_score_threshold": 0.5,
         "max_postings_per_run": 10,
@@ -330,16 +324,80 @@ def test_preferences_apply_immediately_and_keys_stay_hidden(client, env_file):
         "auto_run_hours": 12,
         "input_usd_per_mtok": 2,
         "output_usd_per_mtok": 10,
-        "adzuna_app_id": "app-id",
-        "adzuna_app_key": "app-secret",
     }
     response = client.put("/setup/preferences", json=preferences)
     assert response.status_code == 200
-    assert "app-secret" not in response.text
-    assert response.json()["adzuna_set"] is True
     assert client.app.state.settings.fit_score_threshold == 0.5
     assert client.get("/status").json()["auto_run_hours"] == 12
-    assert "ADZUNA_APP_KEY=app-secret" in env_file.read_text(encoding="utf-8")
+    assert "MAX_COST_PER_RUN_USD=1.5" in env_file.read_text(encoding="utf-8")
+
+
+def test_site_keys_are_saved_but_never_returned(client, env_file, monkeypatch):
+    monkeypatch.delenv("JOOBLE_API_KEY", raising=False)
+    catalog = client.get("/setup/sources").json()
+    jooble = next(site for site in catalog["sites"] if site["name"] == "jooble")
+    assert jooble["key_set"] is False and jooble["env"] == ["JOOBLE_API_KEY"]
+
+    response = client.put("/setup/keys", json={"values": {"JOOBLE_API_KEY": "secret-key"}})
+    assert response.status_code == 200
+    assert "secret-key" not in response.text
+    jooble = next(site for site in response.json()["sites"] if site["name"] == "jooble")
+    assert jooble["key_set"] is True
+    assert "JOOBLE_API_KEY=secret-key" in env_file.read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize(
+    "values", [{"MODEL_PROVIDER": "ollama"}, {"JOOBLE_API_KEY": "has space"}, {"OTHER": "x"}]
+)
+def test_only_known_site_keys_can_be_written(client, env_file, values):
+    before = env_file.read_text(encoding="utf-8")
+    assert client.put("/setup/keys", json={"values": values}).status_code == 422
+    assert env_file.read_text(encoding="utf-8") == before
+
+
+def test_job_sites_alone_are_enough_to_start(client):
+    search = {**SEARCH, "queries": [], "job_sites": ["remoteok"], "search_terms": ["python"]}
+    assert client.put("/setup/search", json=search).status_code == 200
+    assert client.get("/setup/state").json()["ready"] is True
+
+
+def test_the_company_list_builds_in_the_background(client, monkeypatch):
+    built = []
+
+    class FakeDirectory:
+        def __init__(self, path):
+            pass
+
+        def refresh(self, systems):
+            built.append(systems)
+            return {"greenhouse": 3, "lever": 2}
+
+    monkeypatch.setattr("api.main.BoardDirectory", FakeDirectory)
+    assert client.post("/setup/directory").status_code == 202
+    progress = finish_run(client)
+    assert progress["message"] == "Company list ready: 5 companies."
+    assert "greenhouse" in built[0]
+
+
+def test_runs_and_list_builds_never_overlap(client, monkeypatch):
+    release = threading.Event()
+
+    class SlowDirectory:
+        def __init__(self, path):
+            pass
+
+        def refresh(self, systems):
+            release.wait(10)
+            return {}
+
+    monkeypatch.setattr("api.main.BoardDirectory", SlowDirectory)
+    assert client.post("/setup/directory").status_code == 202
+    assert client.post("/runs").status_code == 409
+    assert client.post("/setup/directory").status_code == 409
+    release.set()
+    finish_run(client)
+    assert client.post("/runs").status_code == 202
+    finish_run(client)
 
 
 def test_automatic_runs_cannot_be_too_frequent(client):

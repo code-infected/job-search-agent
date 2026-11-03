@@ -8,12 +8,15 @@ from typing import Optional
 from boards import find_boards
 from config import Settings
 from graph.build import build_graph, open_checkpointer
+from graph.nodes.discover import DIRECTORY_SYSTEMS
 from graph.nodes.human_review import ReviewDecision
+from graph.sources.directory import BoardDirectory
 from jobs import job_rows, to_csv
 from memory.store import MemoryStore
 from runner import (
     build_dependencies,
     build_read_only_graph,
+    directory_path,
     is_pending,
     pending_reviews,
     run_batch,
@@ -63,6 +66,12 @@ def main() -> None:
     commands.add_parser("rescore", help="score ruled-out postings again on the next run")
     find = commands.add_parser("find-board", help="find the job board a company uses")
     find.add_argument("company", help="a company name or careers page link")
+    directory = commands.add_parser(
+        "directory", help="build or show the list of companies on each board system"
+    )
+    directory.add_argument(
+        "--refresh", action="store_true", help="read Common Crawl again even if the list is new"
+    )
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
@@ -77,6 +86,15 @@ def main() -> None:
             for title in match.sample_titles:
                 print(f"    {printable(title)}")
         print(f"{len(matches)} boards found. Add one on the setup page or to data/search.json.")
+        return
+
+    if args.command == "directory":
+        print("Reading Common Crawl's index. This takes a few minutes.")
+        board_directory = BoardDirectory(directory_path(settings))
+        counts = board_directory.refresh(list(DIRECTORY_SYSTEMS), force=args.refresh)
+        for system, count in counts.items():
+            print(f"{system:16} {count} companies")
+        print(f"{sum(counts.values())} companies in total")
         return
 
     store = MemoryStore(settings.vector_store_path)

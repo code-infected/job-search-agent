@@ -241,7 +241,7 @@ def test_redirect_to_an_internal_address_is_refused():
         follow_redirects=True,
         event_hooks={"request": [reject_internal_address]},
     )
-    with patch("graph.nodes.discover.socket.getaddrinfo", _resolve):
+    with patch("graph.sources.common.socket.getaddrinfo", _resolve):
         with pytest.raises(ValueError, match="non-public"):
             PoliteClient(http, delay_seconds=0).get("https://example.com/job")
 
@@ -249,7 +249,7 @@ def test_redirect_to_an_internal_address_is_refused():
 @pytest.mark.parametrize("address", ["127.0.0.1", "10.0.0.5", "169.254.169.254", "::1"])
 def test_internal_addresses_are_refused(address):
     request = httpx.Request("GET", "https://internal.example/")
-    with patch("graph.nodes.discover.socket.getaddrinfo") as resolve:
+    with patch("graph.sources.common.socket.getaddrinfo") as resolve:
         resolve.return_value = [(0, 0, 0, "", (address, 443))]
         with pytest.raises(ValueError, match="non-public"):
             reject_internal_address(request)

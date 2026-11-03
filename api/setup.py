@@ -15,8 +15,11 @@ from envfile import update_env
 from graph.facts import FactsStore, FactsStoreError, load_facts
 from graph.llm import Budget, ModelCallError
 from graph.nodes.discover import SearchConfig, load_search_config
+from graph.sources import BOARD_SOURCES, KEY_NAMES, SITE_SOURCES, SOURCES
+from graph.sources.directory import SYSTEMS, BoardDirectory
 from models import PROVIDERS, get_chat_model
 from resume import MAX_RESUME_BYTES, ResumeError, resume_text, suggest_facts
+from runner import directory_path
 
 router = APIRouter(prefix="/setup")
 MIN_AUTO_RUN_HOURS = 6
@@ -46,8 +49,6 @@ class Preferences(BaseModel):
     auto_run_hours: float = Field(ge=0, le=168)
     input_usd_per_mtok: float = Field(ge=0, le=1000)
     output_usd_per_mtok: float = Field(ge=0, le=1000)
-    adzuna_app_id: str = Field(default="", max_length=200)
-    adzuna_app_key: str = Field(default="", max_length=200)
 
     @field_validator("auto_run_hours")
     @classmethod
@@ -61,6 +62,44 @@ class Preferences(BaseModel):
 
 class BoardSearch(BaseModel):
     query: str = Field(min_length=1, max_length=500)
+
+
+class SourceKeys(BaseModel):
+    """Keys for job sites. Empty values are ignored, so a saved key is kept."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    values: dict[str, str]
+
+    @field_validator("values")
+    @classmethod
+    def known_keys(cls, values: dict[str, str]) -> dict[str, str]:
+        unknown = set(values) - KEY_NAMES
+        if unknown:
+            raise ValueError(f"unknown key names: {sorted(unknown)}")
+        if any(len(value) > 500 for value in values.values()):
+            raise ValueError("keys must be under 500 characters")
+        return {name: value.strip() for name, value in values.items() if value.strip()}
+
+
+def source_catalog(settings: Settings) -> dict:
+    """Every source the setup page can offer, whether its keys are set, and the directory."""
+    sites = []
+    for name in SITE_SOURCES:
+        details = SOURCES[name].describe(name)
+        details["key_set"] = all(os.environ.get(key) for key in SOURCES[name].env)
+        sites.append(details)
+    directory = BoardDirectory(directory_path(settings))
+    return {
+        "sites": sites,
+        "boards": [SOURCES[name].describe(name) for name in BOARD_SOURCES],
+        "directory": {
+            "systems": [
+                {"name": name, "label": SOURCES[name].label, "boards": count}
+                for name, count in directory.counts().items()
+            ]
+        },
+    }
 
 
 def model_status() -> dict:
@@ -92,12 +131,13 @@ def setup_status(settings: Settings) -> dict:
     search, search_error = None, None
     if settings.search_config_path.exists():
         try:
-            search = load_search_config(settings.search_config_path).model_dump(exclude_none=True)
+            config = load_search_config(settings.search_config_path)
+            search = config.model_dump(exclude_none=True)
         except (OSError, ValidationError) as exc:
             search_error = str(exc)
     if search is None:
         missing.append("search")
-    elif not search["queries"]:
+    elif not config.has_sources():
         missing.append("sources")
     return {
         "ready": not missing,
@@ -114,16 +154,13 @@ def setup_status(settings: Settings) -> dict:
             "auto_run_hours": settings.auto_run_hours,
             "input_usd_per_mtok": settings.input_usd_per_mtok,
             "output_usd_per_mtok": settings.output_usd_per_mtok,
-            "adzuna_set": bool(
-                os.environ.get("ADZUNA_APP_ID") and os.environ.get("ADZUNA_APP_KEY")
-            ),
         },
     }
 
 
-def _write_json(path: Path, model: BaseModel) -> None:
+def _write_json(path: Path, model: BaseModel, exclude_defaults: bool = False) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    payload = model.model_dump(exclude_none=True)
+    payload = model.model_dump(exclude_none=True, exclude_defaults=exclude_defaults)
     path.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
 
 
@@ -188,7 +225,8 @@ def save_facts(facts: FactsStore, request: Request) -> dict:
 
 @router.put("/search")
 def save_search(search: SearchConfig, request: Request) -> dict:
-    _write_json(request.app.state.settings.search_config_path, search)
+    # Defaults are left out, so the saved file shows only what the user chose.
+    _write_json(request.app.state.settings.search_config_path, search, exclude_defaults=True)
     return {"saved": len(search.queries)}
 
 
@@ -207,10 +245,6 @@ def save_preferences(preferences: Preferences, request: Request) -> dict:
         "MODEL_INPUT_USD_PER_MTOK": str(preferences.input_usd_per_mtok),
         "MODEL_OUTPUT_USD_PER_MTOK": str(preferences.output_usd_per_mtok),
     }
-    if preferences.adzuna_app_id:
-        updates["ADZUNA_APP_ID"] = preferences.adzuna_app_id
-    if preferences.adzuna_app_key:
-        updates["ADZUNA_APP_KEY"] = preferences.adzuna_app_key
     _save_env(request, updates)
     request.app.state.settings = replace(
         request.app.state.settings,
@@ -227,3 +261,23 @@ def save_preferences(preferences: Preferences, request: Request) -> dict:
 @router.post("/rescore")
 def rescore(request: Request) -> dict:
     return {"released": request.app.state.store.release_discarded()}
+
+
+@router.get("/sources")
+def sources(request: Request) -> dict:
+    return source_catalog(request.app.state.settings)
+
+
+@router.put("/keys")
+def save_keys(keys: SourceKeys, request: Request) -> dict:
+    """Never returns a key, only which sources now have theirs."""
+    if keys.values:
+        _save_env(request, keys.values)
+    return source_catalog(request.app.state.settings)
+
+
+@router.post("/directory", status_code=status.HTTP_202_ACCEPTED)
+def build_directory(request: Request) -> dict:
+    if not request.app.state.start_directory_build(request.app):
+        raise HTTPException(status.HTTP_409_CONFLICT, "wait for the current run to finish")
+    return {"status": "started", "systems": list(SYSTEMS)}
