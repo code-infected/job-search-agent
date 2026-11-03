@@ -46,28 +46,37 @@ A draft that fails gets one rewrite with the violations as feedback. If it still
 
 This is a vocabulary check, not a semantic proof. "I built PostgreSQL and React." uses only fact vocabulary and passes, even though it misstates both. That is one reason the human gate exists.
 
-## Setup
+## Quick start
 
-Requires Python 3.14.
+Requires Python 3.14. From this folder, run `start.bat` on Windows or `./start.sh` on macOS and Linux. The first start creates a virtual environment and installs dependencies, then every start opens the agent in your browser. `python app.py` does the same once the environment exists.
 
-```bash
-python -m venv .venv
-source .venv/bin/activate        # Windows: .venv\Scripts\activate
-pip install -r requirements.lock
-cp .env.example .env             # set MODEL_PROVIDER, MODEL_NAME, and the matching key
-mkdir -p data
-cp config/facts.example.json data/facts.json
-cp config/search.example.json data/search.json
-```
+The first visit goes to the setup page, which walks through four steps:
 
-Edit both files in `data/`, which is gitignored:
+1. **Model.** Pick a provider and model and paste its key. The key is written to `.env` and never shown again.
+2. **About you.** Upload your resume as PDF or text. The model suggests facts copied from it, and any fact using a name or number not found in the resume is flagged. Nothing is saved until you have checked, edited, and confirmed the list. Email addresses and phone numbers are left out. These facts are the only things a draft may say about you.
+3. **What you're looking for.** A plain-language description of the roles you want, plus keyword, excluded keyword, and location filters. Filters run before any model call, so they save money.
+4. **Where to look.** Type a company name or paste its careers page link, and the agent finds which job board it uses. You can also add a remote job search or a country-wide search, or a single posting link.
 
-- `facts.json` is the only thing the agent may say about you. Write each fact the way you would be happy to see it quoted.
-- `search.json` holds `target_profile`, a plain-language description of the roles you want, and `queries`. Each query is a public Greenhouse or Lever board or a direct `url`, with optional `keywords`, `exclude_keywords`, and `locations` filters applied before any model call.
+A last section sets the fit threshold, how many postings one run may check, a spend limit, model prices for cost tracking, and an optional schedule.
+
+Everything stays on your machine in `data/` and `.env`, both gitignored. The only data that leaves is what goes to your model provider, and to LangSmith if tracing is on.
+
+### Setting up by hand
+
+The setup page writes two files you can also edit directly. Copy `config/facts.example.json` and `config/search.example.json` into `data/`, and `.env.example` to `.env`.
+
+`search.json` takes a `target_profile`, optional top-level `keywords`, `exclude_keywords`, and `locations` that every query inherits, and a list of `queries`. A query that sets its own filter overrides the shared one. Locations containing "worldwide" or "anywhere" always pass a location filter.
+
+| Source | Query fields | Notes |
+| --- | --- | --- |
+| `greenhouse`, `lever`, `ashby`, `workable`, `smartrecruiters` | `board` | A company's public board. `python cli.py find-board "Company"` finds it |
+| `remotive` | `search` | Remote jobs worldwide. Fetched at most once every six hours, as Remotive asks, and each posting credits it |
+| `adzuna` | `search`, `country` | Country-wide search across many employers. Needs a free key in `ADZUNA_APP_ID` and `ADZUNA_APP_KEY`. Two-letter country code such as `gb` or `in` |
+| `url` | `url` | One posting page |
 
 ## Running
 
-Everything runs from the terminal:
+Start a run from the browser page, or from the terminal:
 
 ```bash
 python cli.py run                 # search, score, and draft
@@ -79,30 +88,30 @@ python cli.py decide <run_id> rejected --reason "Too much on-call"
 python cli.py digest              # drafts waiting past REVIEW_STALE_HOURS
 python cli.py outcome <url> "interview"
 python cli.py release <url>       # retry a posting that failed
+python cli.py rescore             # score ruled-out postings again, after changing your profile
+python cli.py find-board "Acme"   # find a company's job board by name or careers link
 ```
 
 A rejection needs a reason, because it becomes precedent for future scoring. Approved drafts land in `data/drafts/`. With `DRAFT_BACKEND=gmail` and OAuth credentials using the `gmail.compose` scope, they become Gmail drafts instead.
 
-### Status page
+### Browser page
 
-If you prefer to watch a run in the browser:
+The jobs page starts a run and follows its progress, including tokens used and, once prices are set, the cost so far. It lists every posting found with its company, location, score, the reasoning behind the score, and the site it came from. Postings new since your last visit are marked, and the tab title shows how many drafts wait for review. The list downloads as a CSV that opens in Excel.
 
-```bash
-uvicorn api.main:create_app --factory --port 8000
-```
+Reviewing drafts stays in the terminal, so the page cannot approve anything.
 
-Open `http://127.0.0.1:8000` to start a run, follow its progress, browse the jobs found with each score and its reasoning, and download them as CSV. Reviewing drafts stays in the terminal, so the page cannot approve anything.
+With a schedule set on the setup page, the agent also starts a run on its own every 6 to 168 hours while it is open. Runs never overlap, and each run stops at the spend limit.
 
-The page has no login, since it is a personal tool. Instead it only answers requests addressed to `127.0.0.1` or `localhost`, and only starts a run when asked from its own page. That keeps other websites open in your browser from reading your job list or starting paid runs. Do not put it behind a proxy or expose it on a network.
+The page has no login, since it is a personal tool. Instead it only answers requests addressed to `127.0.0.1` or `localhost`, and only accepts changes made from its own pages. That keeps other websites open in your browser from reading your data, changing your settings, or starting paid runs. Do not put it behind a proxy or expose it on a network.
 
-To run the status page in a container, mount your data and pass your settings. The image contains neither:
+To run it in a container, mount your data and pass your settings. The image contains neither:
 
 ```bash
 docker build -t job-search-agent .
 docker run -p 127.0.0.1:8000:8000 --env-file .env -v "$PWD/data:/app/data" job-search-agent
 ```
 
-Review drafts inside it with `docker exec -it <container> python cli.py pending`.
+In a container the setup page can save facts, search, and sources, which live in `data/`, but not the model or preferences, which come from your env file. Review drafts with `docker exec -it <container> python cli.py pending`.
 
 ## Switching providers
 
@@ -124,8 +133,8 @@ Latest run, on the synthetic sample in `evals/sample_tracker.csv`:
 | Fit agreement with logged decision | 100% (10 scored) |
 | Reasoning names the logged disqualifier | 100% (6 checked) |
 | Drafts passing the fact check | 4 of 4 |
-| Tokens | 23079 in, 3637 out |
-| LangSmith | 15 calls, $0.0767, mean latency 3.1s |
+| Tokens | 23379 in, 3690 out |
+| LangSmith | 14 calls, $0.0780, mean latency 3.1s |
 
 Model: `anthropic/claude-sonnet-5`. Raw output is in `evals/results/`.
 
@@ -147,7 +156,10 @@ Run the unit tests with `pytest`. They use a scripted model and need no keys or 
 
 ## Known limitations
 
-- **Discovery** reads public Greenhouse and Lever boards and direct URLs. General web search is not included, since it needs a paid search API.
+- **Discovery** covers public company boards on five systems, Remotive, Adzuna, and single posting links. LinkedIn, Indeed, Naukri, and similar sites are not included, because their terms forbid automated collection. General web search is not included, since it needs a paid search API.
+- **Adzuna** only provides a short summary of each posting, so scores from it rest on less text. The posting text tells the model this.
+- **Board finder** cannot read careers pages rendered by JavaScript. Use the company name instead, or open the page and copy the link to its job board.
+- **Outreach drafts** have no recipient. The agent does not look up hiring managers or email addresses.
 - **Stuck claims:** a process killed between discovery and a terminal state leaves its posting marked in progress, so it will not be rediscovered until released.
 - **ChromaDB advisories:** `pip-audit` reports PYSEC-2026-311, 3813, 3814, and 3815 against `chromadb`, with no fixed release. All four concern Chroma's HTTP server. This project uses the embedded client and never starts that server, so they are not reachable here. Do not expose a Chroma server with this version.
 - **Tracing** sends posting text and candidate facts to LangSmith. Set `LANGSMITH_TRACING=false` to keep them local.
