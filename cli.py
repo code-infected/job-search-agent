@@ -1,11 +1,13 @@
-"""Command line: run a batch, list reviews, decide one, or print the daily digest."""
+"""Command line: run a batch, list jobs, review drafts, and record what happened next."""
 
 import argparse
 import logging
+from pathlib import Path
 
 from config import Settings
 from graph.build import build_graph, open_checkpointer
 from graph.nodes.human_review import ReviewDecision
+from jobs import job_rows, to_csv
 from runner import (
     build_dependencies,
     is_pending,
@@ -31,12 +33,46 @@ def main() -> None:
     decide.add_argument("run_id")
     decide.add_argument("decision", choices=["approved", "rejected"])
     decide.add_argument("--reason")
+    jobs = commands.add_parser("jobs", help="list every posting found, best fit first")
+    jobs.add_argument("--csv", type=Path, help="write the list to this CSV file instead")
+    outcome = commands.add_parser("outcome", help="record what happened after applying")
+    outcome.add_argument("url")
+    outcome.add_argument("outcome", help='for example "interview" or "no reply"')
+    release = commands.add_parser("release", help="let a failed posting be tried again")
+    release.add_argument("url")
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
     settings = Settings.from_env()
     deps = build_dependencies(settings)
     checkpointer = open_checkpointer(settings.checkpoint_db)
+
+    if args.command == "jobs":
+        deps.postings = iter(())
+        waiting = pending_reviews(build_graph(deps, checkpointer), checkpointer)
+        rows = job_rows(deps.store, [review.payload for review in waiting])
+        if args.csv:
+            args.csv.write_text(to_csv(rows), encoding="utf-8-sig")
+            print(f"{len(rows)} postings written to {args.csv}")
+            return
+        for row in rows:
+            score = "  -  " if row["fit_score"] is None else f"{row['fit_score']:.2f}"
+            print(f"{score}  {printable(row['title'])} | {printable(row['location'])}")
+            print(f"      {row['status']}  {printable(row['url'])}")
+        print(f"{len(rows)} postings")
+        return
+
+    if args.command == "outcome":
+        if not deps.store.record_outcome(args.url, args.outcome):
+            parser.error(f"no decision recorded for {args.url}")
+        print("recorded")
+        return
+
+    if args.command == "release":
+        if not deps.store.release_failed(args.url):
+            parser.error(f"no failed posting recorded for {args.url}")
+        print("released, the next run will try it again")
+        return
 
     if args.command == "run":
         for values in run_batch(deps, checkpointer, settings.max_postings_per_run):

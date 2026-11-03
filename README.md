@@ -54,7 +54,7 @@ Requires Python 3.14.
 python -m venv .venv
 source .venv/bin/activate        # Windows: .venv\Scripts\activate
 pip install -r requirements.lock
-cp .env.example .env             # set MODEL_PROVIDER, MODEL_NAME, the matching key, REVIEW_API_TOKEN
+cp .env.example .env             # set MODEL_PROVIDER, MODEL_NAME, and the matching key
 mkdir -p data
 cp config/facts.example.json data/facts.json
 cp config/search.example.json data/search.json
@@ -67,42 +67,42 @@ Edit both files in `data/`, which is gitignored:
 
 ## Running
 
-Review in the browser:
+Everything runs from the terminal:
+
+```bash
+python cli.py run                 # search, score, and draft
+python cli.py jobs                # every posting found, best fit first
+python cli.py jobs --csv jobs.csv # the same list as a spreadsheet
+python cli.py pending             # drafts waiting for your decision
+python cli.py decide <run_id> approved
+python cli.py decide <run_id> rejected --reason "Too much on-call"
+python cli.py digest              # drafts waiting past REVIEW_STALE_HOURS
+python cli.py outcome <url> "interview"
+python cli.py release <url>       # retry a posting that failed
+```
+
+A rejection needs a reason, because it becomes precedent for future scoring. Approved drafts land in `data/drafts/`. With `DRAFT_BACKEND=gmail` and OAuth credentials using the `gmail.compose` scope, they become Gmail drafts instead.
+
+### Status page
+
+If you prefer to watch a run in the browser:
 
 ```bash
 uvicorn api.main:create_app --factory --port 8000
 ```
 
-Open `http://127.0.0.1:8000`, enter your `REVIEW_API_TOKEN`, start a run, and approve or reject each draft. A rejection needs a reason, because it becomes precedent.
+Open `http://127.0.0.1:8000` to start a run, follow its progress, browse the jobs found with each score and its reasoning, and download them as CSV. Reviewing drafts stays in the terminal, so the page cannot approve anything.
 
-Or from the command line:
+The page has no login, since it is a personal tool. Instead it only answers requests addressed to `127.0.0.1` or `localhost`, and only starts a run when asked from its own page. That keeps other websites open in your browser from reading your job list or starting paid runs. Do not put it behind a proxy or expose it on a network.
 
-```bash
-python cli.py run
-python cli.py pending
-python cli.py decide <run_id> approved
-python cli.py decide <run_id> rejected --reason "Too much on-call"
-python cli.py digest              # reviews waiting past REVIEW_STALE_HOURS
-```
-
-Drafts land in `data/drafts/`. With `DRAFT_BACKEND=gmail` and OAuth credentials using the `gmail.compose` scope, they become Gmail drafts instead.
-
-To run in a container, mount your data and pass your settings. The image contains neither:
+To run the status page in a container, mount your data and pass your settings. The image contains neither:
 
 ```bash
 docker build -t job-search-agent .
 docker run -p 127.0.0.1:8000:8000 --env-file .env -v "$PWD/data:/app/data" job-search-agent
 ```
 
-| Route | Purpose |
-| --- | --- |
-| `GET /reviews`, `POST /reviews/{run_id}` | List pending reviews, and approve or reject one |
-| `GET /reviews/digest` | Pending count and reviews past the stale limit |
-| `POST /runs` | Start a batch |
-| `POST /outcomes` | Attach a real-world outcome to a past decision |
-| `GET /dead-letters`, `POST /dead-letters/release` | Inspect failures, and allow one to be retried |
-
-All except `GET /health` and the dashboard page require `Authorization: Bearer <REVIEW_API_TOKEN>`.
+Review drafts inside it with `docker exec -it <container> python cli.py pending`.
 
 ## Switching providers
 
@@ -137,7 +137,7 @@ Run the unit tests with `pytest`. They use a scripted model and need no keys or 
 
 | Failure | Behaviour |
 | --- | --- |
-| Model call fails or returns malformed output | Three attempts with backoff, then dead-letter. The batch continues |
+| Model call fails or returns malformed output | Three attempts with backoff, then dead-letter, shown as Failed by `cli.py jobs`. The batch continues |
 | Posting seen before | Skipped by canonical URL before any model call |
 | Restart during a pending review | The review is restored from SQLite and resumes without repeating earlier nodes |
 | Review left unanswered | Listed by the digest after `REVIEW_STALE_HOURS` |
@@ -163,4 +163,4 @@ Run the unit tests with `pytest`. They use a scripted model and need no keys or 
 | Escalation beyond the daily digest | Not needed at this scale |
 | Automated red-teaming of the injection boundary | The boundary and fact check are tested against known attacks, not fuzzed |
 | Cost and latency dashboards | Raw LangSmith traces are enough |
-| Multi-user support | Single-tenant by design, with one shared review token |
+| Multi-user support | A personal tool, run on your own machine |

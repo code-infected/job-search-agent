@@ -1,6 +1,7 @@
 """Runs discovery batches and resolves pending reviews against the checkpointer."""
 
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any, Optional
@@ -55,7 +56,12 @@ def _config(run_id: str) -> dict:
     return {"configurable": {"thread_id": run_id}}
 
 
-def run_batch(deps: Dependencies, checkpointer: SqliteSaver, max_postings: int) -> list[dict]:
+def run_batch(
+    deps: Dependencies,
+    checkpointer: SqliteSaver,
+    max_postings: int,
+    on_result: Optional[Callable[[dict], None]] = None,
+) -> list[dict]:
     """Process postings until discovery runs dry, or a cap or the budget stops the batch."""
     graph = build_graph(deps, checkpointer)
     results = []
@@ -68,6 +74,8 @@ def run_batch(deps: Dependencies, checkpointer: SqliteSaver, max_postings: int) 
         if not values["posting_url"]:
             break
         results.append(values)
+        if on_result:
+            on_result(values)
     return results
 
 

@@ -3,117 +3,121 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Review Queue</title>
+<title>Job Search Agent</title>
 <style>
-  :root { --bg: #f7f7f5; --card: #fff; --ink: #1c1c1a; --muted: #66665f; --line: #ddddd6; --accent: #2b5fa8; --bad: #a83232; }
-  @media (prefers-color-scheme: dark) { :root { --bg: #171716; --card: #21211f; --ink: #ecece7; --muted: #a0a097; --line: #383835; --accent: #7fa8e0; --bad: #e08a8a; } }
+  :root { --bg: #f7f7f5; --card: #fff; --ink: #1c1c1a; --muted: #66665f; --line: #ddddd6; --accent: #2b5fa8; --good: #2e7d4f; }
+  @media (prefers-color-scheme: dark) { :root { --bg: #171716; --card: #21211f; --ink: #ecece7; --muted: #a0a097; --line: #383835; --accent: #7fa8e0; --good: #7fcf9f; } }
   * { box-sizing: border-box; }
-  body { margin: 0 auto; max-width: 760px; padding: 24px 16px; background: var(--bg); color: var(--ink); font: 16px/1.5 system-ui, sans-serif; }
+  body { margin: 0 auto; max-width: 820px; padding: 24px 16px; background: var(--bg); color: var(--ink); font: 16px/1.5 system-ui, sans-serif; }
   h1 { font-size: 22px; margin: 0 0 16px; }
-  .row { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 16px; }
-  input, textarea { flex: 1; min-width: 0; padding: 8px; font: inherit; color: inherit; background: var(--card); border: 1px solid var(--line); border-radius: 6px; }
-  textarea { width: 100%; }
+  .row { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; margin-bottom: 12px; }
   button { padding: 8px 14px; font: inherit; color: var(--accent); background: none; border: 1px solid currentColor; border-radius: 6px; cursor: pointer; }
-  button.reject { color: var(--bad); }
-  article { padding: 16px; margin-bottom: 16px; background: var(--card); border: 1px solid var(--line); border-radius: 8px; }
-  article h2 { margin: 0 0 4px; font-size: 16px; overflow-wrap: anywhere; }
-  pre { margin: 8px 0; white-space: pre-wrap; font: inherit; }
+  button:disabled { opacity: 0.5; cursor: default; }
+  label { color: var(--muted); font-size: 14px; }
+  .panel { padding: 12px 16px; margin-bottom: 24px; background: var(--card); border: 1px solid var(--line); border-radius: 8px; }
+  .running::before { content: ""; display: inline-block; width: 8px; height: 8px; margin-right: 8px; border-radius: 50%; background: var(--good); animation: pulse 1s infinite alternate; }
+  @keyframes pulse { to { opacity: 0.2; } }
   .muted { color: var(--muted); font-size: 14px; }
-  details { margin: 8px 0; }
+  .job { padding: 12px 0; border-top: 1px solid var(--line); }
+  .job a { color: var(--accent); font-weight: 600; overflow-wrap: anywhere; }
+  .fit { display: inline-block; min-width: 3.2em; font-variant-numeric: tabular-nums; font-weight: 600; }
+  .fit.match { color: var(--good); }
+  .note { margin-top: 4px; font-size: 14px; color: var(--good); }
+  details { margin-top: 4px; font-size: 14px; }
+  pre { margin: 6px 0; white-space: pre-wrap; font: inherit; }
 </style>
 </head>
 <body>
-<h1>Review Queue</h1>
-<div class="row">
-  <input id="token" type="password" placeholder="Review API token" autocomplete="off" aria-label="Review API token">
-  <button id="load">Load</button>
-  <button id="run">Start run</button>
+<h1>Job Search Agent</h1>
+<div class="panel">
+  <div class="row">
+    <button id="run">Start run</button>
+    <span id="progress" role="status"></span>
+  </div>
+  <div class="muted">A run searches your job boards, scores each new posting against your profile, and drafts outreach for strong matches. Drafts wait for you in the terminal: <code>python cli.py pending</code>.</div>
 </div>
-<p id="status" class="muted" role="status"></p>
-<main id="queue"></main>
-<template id="card">
-  <article>
-    <h2 class="url"></h2>
-    <p class="muted score"></p>
-    <pre class="reasoning"></pre>
-    <details><summary>Posting</summary><pre class="posting"></pre></details>
-    <strong>Draft</strong>
-    <pre class="draft"></pre>
-    <div class="row"><textarea class="reason" rows="2" placeholder="Reason (required to reject)" aria-label="Reason"></textarea></div>
-    <div class="row">
-      <button class="approve">Approve</button>
-      <button class="reject">Reject</button>
-    </div>
-  </article>
+<div class="row">
+  <button id="csv">Download CSV</button>
+  <label><input id="matches-only" type="checkbox"> Matches only</label>
+</div>
+<p id="summary" class="muted"></p>
+<section id="jobs"></section>
+<template id="job">
+  <div class="job">
+    <span class="fit"></span> <a class="title" target="_blank" rel="noopener noreferrer"></a>
+    <div class="muted meta"></div>
+    <div class="note" hidden>Draft ready. Review it in the terminal: python cli.py pending</div>
+    <details><summary>Why this score</summary><pre class="why"></pre></details>
+  </div>
 </template>
 <script>
-  // Posting text is untrusted, so everything is rendered with textContent, never innerHTML.
-  const queue = document.getElementById("queue");
-  const statusLine = document.getElementById("status");
-  const tokenInput = document.getElementById("token");
+  // Job titles and reasoning come from the open web, so everything is set with textContent.
+  const BELOW = "Below fit threshold";
+  const runButton = document.getElementById("run");
+  const progressLine = document.getElementById("progress");
+  const summary = document.getElementById("summary");
+  const jobsList = document.getElementById("jobs");
+  const matchesOnly = document.getElementById("matches-only");
+  let jobs = [];
+  let timer = null;
 
-  async function call(path, options = {}) {
-    const response = await fetch(path, {
-      ...options,
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${tokenInput.value}` },
-    });
-    if (!response.ok) {
-      const body = await response.json().catch(() => ({}));
-      const detail = Array.isArray(body.detail) ? body.detail.map((item) => item.msg).join("; ") : body.detail;
-      throw new Error(typeof detail === "string" && detail ? detail : `Request failed: ${response.status}`);
-    }
-    return response.json();
+  async function getJson(path, options) {
+    const response = await fetch(path, options);
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(typeof body.detail === "string" ? body.detail : `Request failed: ${response.status}`);
+    return body;
   }
 
-  function renderCard(review) {
-    const card = document.getElementById("card").content.cloneNode(true);
-    const { posting_url, fit_score, fit_reasoning, posting_text, draft_message } = review.payload;
-    card.querySelector(".url").textContent = posting_url;
-    card.querySelector(".score").textContent = `Fit ${Number(fit_score).toFixed(2)}, waiting since ${review.created_at}`;
-    card.querySelector(".reasoning").textContent = fit_reasoning;
-    card.querySelector(".posting").textContent = posting_text;
-    card.querySelector(".draft").textContent = draft_message;
-    const reason = card.querySelector(".reason");
-    const decide = (decision) => async () => {
-      if (decision === "rejected" && !reason.value.trim()) {
-        statusLine.textContent = "A rejection needs a reason, because it guides future scoring.";
-        reason.focus();
-        return;
-      }
-      try {
-        await call(`/reviews/${encodeURIComponent(review.run_id)}`, {
-          method: "POST",
-          body: JSON.stringify({ decision, reason: reason.value || null }),
-        });
-        await load();
-      } catch (error) {
-        statusLine.textContent = error.message;
-      }
-    };
-    card.querySelector(".approve").addEventListener("click", decide("approved"));
-    card.querySelector(".reject").addEventListener("click", decide("rejected"));
-    return card;
+  function renderJob(job) {
+    const row = document.getElementById("job").content.cloneNode(true);
+    const fit = row.querySelector(".fit");
+    fit.textContent = job.fit_score === null ? "-" : Number(job.fit_score).toFixed(2);
+    fit.classList.toggle("match", job.status !== BELOW && job.fit_score !== null);
+    const link = row.querySelector(".title");
+    link.textContent = job.title || job.url;
+    if (/^https?:\/\//i.test(job.url)) link.href = job.url; // never a javascript: link
+    const meta = [job.location, job.status, job.rejection_reason && `Your reason: ${job.rejection_reason}`];
+    row.querySelector(".meta").textContent = meta.filter(Boolean).join("  ·  ");
+    row.querySelector(".note").hidden = job.status !== "Waiting for review";
+    row.querySelector(".why").textContent = job.fit_reasoning;
+    return row;
   }
 
-  async function load() {
+  function renderJobs() {
+    const shown = matchesOnly.checked ? jobs.filter((job) => job.status !== BELOW && job.status !== "Failed") : jobs;
+    jobsList.replaceChildren(...shown.map(renderJob));
+    const matches = jobs.filter((job) => job.status !== BELOW && job.status !== "Failed").length;
+    summary.textContent = jobs.length
+      ? `${jobs.length} jobs found, ${matches} passed the fit threshold. Best fit first.`
+      : "No jobs yet. Start a run.";
+  }
+
+  async function refresh() {
     try {
-      const reviews = await call("/reviews");
-      queue.replaceChildren(...reviews.map(renderCard));
-      statusLine.textContent = reviews.length ? `${reviews.length} waiting` : "Nothing is waiting for review.";
+      const state = await getJson("/status");
+      progressLine.textContent = state.message;
+      progressLine.classList.toggle("running", state.running);
+      runButton.disabled = state.running;
+      jobs = await getJson("/jobs");
+      renderJobs();
+      clearTimeout(timer);
+      if (state.running) timer = setTimeout(refresh, 3000);
     } catch (error) {
-      statusLine.textContent = error.message;
+      progressLine.textContent = error.message;
     }
   }
 
-  document.getElementById("load").addEventListener("click", load);
-  document.getElementById("run").addEventListener("click", async () => {
+  runButton.addEventListener("click", async () => {
     try {
-      await call("/runs", { method: "POST" });
-      statusLine.textContent = "Run started. Load again shortly.";
+      await getJson("/runs", { method: "POST" });
     } catch (error) {
-      statusLine.textContent = error.message;
+      progressLine.textContent = error.message;
     }
+    refresh();
   });
+  matchesOnly.addEventListener("change", renderJobs);
+  document.getElementById("csv").addEventListener("click", () => { window.location.href = "/jobs.csv"; });
+  refresh();
 </script>
 </body>
 </html>

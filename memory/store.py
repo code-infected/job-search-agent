@@ -93,6 +93,13 @@ class MemoryStore:
             for document, metadata in zip(result["documents"], result["metadatas"], strict=True)
         ]
 
+    def all_records(self) -> list[DecisionRecord]:
+        result = self._collection.get(include=["documents", "metadatas"])
+        return [
+            DecisionRecord(posting_excerpt=document, **metadata)
+            for document, metadata in zip(result["documents"], result["metadatas"], strict=True)
+        ]
+
     def record_outcome(self, url: str, outcome: str) -> bool:
         """Attach the real-world outcome to a past decision. False if the URL is unknown."""
         result = self._collection.get(ids=[_record_id(url)], include=["documents", "metadatas"])

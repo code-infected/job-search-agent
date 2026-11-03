@@ -25,7 +25,6 @@ class Settings:
     fit_score_threshold: float
     request_delay_seconds: float
     review_stale_hours: float
-    review_api_token: str
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -45,5 +44,4 @@ class Settings:
             fit_score_threshold=float(env("FIT_SCORE_THRESHOLD", "0.7")),
             request_delay_seconds=float(env("REQUEST_DELAY_SECONDS", "1.0")),
             review_stale_hours=float(env("REVIEW_STALE_HOURS", "24")),
-            review_api_token=env("REVIEW_API_TOKEN", ""),
         )
