@@ -3,13 +3,17 @@
 import argparse
 import logging
 from pathlib import Path
+from typing import Optional
 
+from boards import find_boards
 from config import Settings
 from graph.build import build_graph, open_checkpointer
 from graph.nodes.human_review import ReviewDecision
 from jobs import job_rows, to_csv
+from memory.store import MemoryStore
 from runner import (
     build_dependencies,
+    build_read_only_graph,
     is_pending,
     pending_reviews,
     run_batch,
@@ -21,6 +25,22 @@ from runner import (
 def printable(value: object) -> str:
     """Stored text derives from the open web, so it must not reach the terminal as escapes."""
     return "".join(ch if ch.isprintable() else " " for ch in str(value))
+
+
+def print_jobs(store: MemoryStore, settings: Settings, csv_path: Optional[Path]) -> None:
+    checkpointer = open_checkpointer(settings.checkpoint_db)
+    waiting = pending_reviews(build_read_only_graph(store, checkpointer), checkpointer)
+    rows = job_rows(store, [review.payload for review in waiting])
+    if csv_path:
+        csv_path.write_text(to_csv(rows), encoding="utf-8-sig")
+        print(f"{len(rows)} postings written to {csv_path}")
+        return
+    for row in rows:
+        score = "  -  " if row["fit_score"] is None else f"{row['fit_score']:.2f}"
+        where = " | ".join(printable(row[key]) for key in ("company", "location") if row[key])
+        print(f"{score}  {printable(row['title'])} | {where}")
+        print(f"      {row['status']}  {printable(row['url'])}")
+    print(f"{len(rows)} postings")
 
 
 def main() -> None:
@@ -40,39 +60,44 @@ def main() -> None:
     outcome.add_argument("outcome", help='for example "interview" or "no reply"')
     release = commands.add_parser("release", help="let a failed posting be tried again")
     release.add_argument("url")
+    commands.add_parser("rescore", help="score ruled-out postings again on the next run")
+    find = commands.add_parser("find-board", help="find the job board a company uses")
+    find.add_argument("company", help="a company name or careers page link")
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
+    # Request logs would print full URLs, and some sources carry an API key in the URL.
+    logging.getLogger("httpx").setLevel(logging.WARNING)
     settings = Settings.from_env()
-    deps = build_dependencies(settings)
+
+    if args.command == "find-board":
+        matches = find_boards(args.company)
+        for match in matches:
+            print(f"{match.source} {match.board}: {match.open_jobs} open jobs")
+            for title in match.sample_titles:
+                print(f"    {printable(title)}")
+        print(f"{len(matches)} boards found. Add one on the setup page or to data/search.json.")
+        return
+
+    store = MemoryStore(settings.vector_store_path)
+    if args.command in ("jobs", "outcome", "release", "rescore"):
+        if args.command == "rescore":
+            count = store.release_discarded()
+            print(f"{count} ruled-out postings will be scored again on the next run")
+        elif args.command == "outcome":
+            if not store.record_outcome(args.url, args.outcome):
+                parser.error(f"no decision recorded for {args.url}")
+            print("recorded")
+        elif args.command == "release":
+            if not store.release_failed(args.url):
+                parser.error(f"no failed posting recorded for {args.url}")
+            print("released, the next run will try it again")
+        else:
+            print_jobs(store, settings, args.csv)
+        return
+
+    deps = build_dependencies(settings, store)
     checkpointer = open_checkpointer(settings.checkpoint_db)
-
-    if args.command == "jobs":
-        deps.postings = iter(())
-        waiting = pending_reviews(build_graph(deps, checkpointer), checkpointer)
-        rows = job_rows(deps.store, [review.payload for review in waiting])
-        if args.csv:
-            args.csv.write_text(to_csv(rows), encoding="utf-8-sig")
-            print(f"{len(rows)} postings written to {args.csv}")
-            return
-        for row in rows:
-            score = "  -  " if row["fit_score"] is None else f"{row['fit_score']:.2f}"
-            print(f"{score}  {printable(row['title'])} | {printable(row['location'])}")
-            print(f"      {row['status']}  {printable(row['url'])}")
-        print(f"{len(rows)} postings")
-        return
-
-    if args.command == "outcome":
-        if not deps.store.record_outcome(args.url, args.outcome):
-            parser.error(f"no decision recorded for {args.url}")
-        print("recorded")
-        return
-
-    if args.command == "release":
-        if not deps.store.release_failed(args.url):
-            parser.error(f"no failed posting recorded for {args.url}")
-        print("released, the next run will try it again")
-        return
 
     if args.command == "run":
         for values in run_batch(deps, checkpointer, settings.max_postings_per_run):

@@ -1,10 +1,11 @@
-"""Local status page: start a run, watch its progress, and browse the jobs found.
+"""Local web app: set up the agent, start or schedule runs, and browse the jobs found.
 
 Drafts are reviewed in the terminal (`python cli.py pending` and `decide`), so nothing
-here can approve or save one. The page has no login because it is a personal tool, so it
-only answers requests addressed to this machine, and only starts a run when asked by
-the page itself. That stops another website open in the browser from reading the job
-list through DNS rebinding or starting paid runs with a cross-site request.
+here can approve or save one. The app has no login because it is a personal tool, so it
+only answers requests addressed to this machine, and only accepts changes made from its
+own pages. That stops another website open in the browser from reading your data
+through DNS rebinding, or starting paid runs and changing settings with a cross-site
+request.
 """
 
 import logging
@@ -16,19 +17,23 @@ from pathlib import Path
 from typing import Optional
 from urllib.parse import urlsplit
 
-from fastapi import BackgroundTasks, FastAPI, HTTPException, Request, status
+from fastapi import FastAPI, HTTPException, Request, status
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 
-from config import Settings
-from graph.build import Dependencies, build_graph, open_checkpointer
+from api.setup import router as setup_router
+from api.setup import setup_status
+from config import ENV_PATH, Settings
+from graph.build import Dependencies, open_checkpointer
+from graph.nodes.discover import FetchLog
 from jobs import job_rows, to_csv
 from memory.store import MemoryStore
-from runner import build_dependencies, pending_reviews, run_batch
+from runner import build_dependencies, build_read_only_graph, pending_reviews, run_batch
 
 logger = logging.getLogger(__name__)
 
 LOCAL_HOSTS = frozenset({"127.0.0.1", "localhost", "[::1]", "::1"})
-DASHBOARD = Path(__file__).with_name("dashboard.html")
+PAGES = Path(__file__).parent
+SCHEDULER_TICK_SECONDS = 60
 CONTENT_SECURITY_POLICY = (
     "default-src 'none'; script-src 'self' 'unsafe-inline'; style-src 'unsafe-inline'; "
     "connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
@@ -47,18 +52,88 @@ def create_app(
     settings: Optional[Settings] = None,
     dependency_factory: Optional[Callable[[MemoryStore], Dependencies]] = None,
     store: Optional[MemoryStore] = None,
+    env_path: Path = ENV_PATH,
+    scheduler: bool = True,
 ) -> FastAPI:
-    settings = settings or Settings.from_env()
-    build = dependency_factory or (lambda memory: build_dependencies(settings, memory))
+    progress = {"running": False, "checked": 0, "drafted": 0, "message": "No run yet."}
+    batch_lock = threading.Lock()
+    stop = threading.Event()
+
+    def build(app: FastAPI) -> Dependencies:
+        if dependency_factory:
+            return dependency_factory(app.state.store)
+        return build_dependencies(app.state.settings, app.state.store)
+
+    def start_batch(app: FastAPI) -> bool:
+        if not batch_lock.acquire(blocking=False):
+            return False
+        progress.update(
+            running=True,
+            checked=0,
+            drafted=0,
+            tokens=0,
+            cost_usd=None,
+            started_at=_now(),
+            finished_at=None,
+            message="Searching job boards...",
+        )
+
+        def run() -> None:
+            try:
+                deps = build(app)
+                settings = app.state.settings
+
+                def counted(values: dict) -> None:
+                    progress["checked"] += 1
+                    progress["drafted"] += values["approval_status"] == "pending"
+                    progress["tokens"] = deps.budget.input_tokens + deps.budget.output_tokens
+                    if settings.input_usd_per_mtok or settings.output_usd_per_mtok:
+                        progress["cost_usd"] = round(deps.budget.cost_usd, 4)
+                    progress["message"] = f"Checked {progress['checked']} postings..."
+
+                run_batch(deps, app.state.checkpointer, settings.max_postings_per_run, counted)
+                stopped = " Stopped at the spend limit." if deps.budget.exceeded else ""
+                progress["message"] = (
+                    f"Finished: {progress['checked']} new postings checked, "
+                    f"{progress['drafted']} drafts waiting for review.{stopped}"
+                )
+            except Exception as error:
+                logger.exception("run failed")
+                progress["message"] = f"Run failed: {error}"
+            finally:
+                progress.update(running=False, finished_at=_now())
+                batch_lock.release()
+
+        app.state.batch_thread = threading.Thread(target=run, daemon=True)
+        app.state.batch_thread.start()
+        return True
+
+    def scheduled_tick(app: FastAPI) -> bool:
+        """Start a run if automatic runs are on, setup is complete, and one is due."""
+        hours = app.state.settings.auto_run_hours
+        if hours <= 0 or not setup_status(app.state.settings)["ready"]:
+            return False
+        if not app.state.schedule_log.allow("scheduled_run", hours * 3600):
+            return False
+        return start_batch(app)
+
+    def scheduler_loop(app: FastAPI) -> None:
+        while not stop.wait(SCHEDULER_TICK_SECONDS):
+            try:
+                scheduled_tick(app)
+            except Exception:
+                logger.exception("scheduled run check failed")
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> Iterator[None]:
-        app.state.store = store or MemoryStore(settings.vector_store_path)
-        app.state.checkpointer = open_checkpointer(settings.checkpoint_db)
-        deps = build(app.state.store)
-        deps.postings = iter(())  # only reads paused runs, never discovers
-        app.state.graph = build_graph(deps, app.state.checkpointer)
+        app.state.store = store or MemoryStore(app.state.settings.vector_store_path)
+        app.state.checkpointer = open_checkpointer(app.state.settings.checkpoint_db)
+        app.state.graph = build_read_only_graph(app.state.store, app.state.checkpointer)
+        app.state.schedule_log = FetchLog(app.state.settings.checkpoint_db.parent / "schedule.json")
+        if scheduler:
+            threading.Thread(target=scheduler_loop, args=(app,), daemon=True).start()
         yield
+        stop.set()
         app.state.checkpointer.conn.close()
 
     app = FastAPI(
@@ -68,8 +143,11 @@ def create_app(
         redoc_url=None,
         openapi_url=None,
     )
-    batch_lock = threading.Lock()
-    progress = {"running": False, "checked": 0, "drafted": 0, "message": "No run yet."}
+    app.state.settings = settings or Settings.from_env()
+    app.state.env_path = env_path
+    app.state.start_batch = start_batch
+    app.state.scheduled_tick = scheduled_tick
+    app.include_router(setup_router)
 
     @app.middleware("http")
     async def local_only(request: Request, call_next):
@@ -90,15 +168,26 @@ def create_app(
 
     @app.get("/", response_class=HTMLResponse, include_in_schema=False)
     def dashboard() -> str:
-        return DASHBOARD.read_text(encoding="utf-8")
+        return (PAGES / "dashboard.html").read_text(encoding="utf-8")
+
+    @app.get("/setup", response_class=HTMLResponse, include_in_schema=False)
+    def setup_page() -> str:
+        return (PAGES / "setup.html").read_text(encoding="utf-8")
 
     @app.get("/health")
     def health() -> dict:
         return {"status": "ok"}
 
     @app.get("/status")
-    def run_status() -> dict:
-        return dict(progress)
+    def run_status(request: Request) -> dict:
+        settings = request.app.state.settings
+        setup = setup_status(settings)
+        return {
+            **progress,
+            "ready": setup["ready"],
+            "missing": setup["missing"],
+            "auto_run_hours": settings.auto_run_hours,
+        }
 
     @app.get("/jobs")
     def jobs(request: Request) -> list[dict]:
@@ -113,35 +202,13 @@ def create_app(
         )
 
     @app.post("/runs", status_code=status.HTTP_202_ACCEPTED)
-    def start_run(request: Request, background: BackgroundTasks) -> dict:
-        if not batch_lock.acquire(blocking=False):
+    def start_run(request: Request) -> dict:
+        setup = setup_status(request.app.state.settings)
+        if not setup["ready"]:
+            missing = ", ".join(setup["missing"])
+            raise HTTPException(status.HTTP_409_CONFLICT, f"finish setup first: {missing}")
+        if not start_batch(request.app):
             raise HTTPException(status.HTTP_409_CONFLICT, "a run is already in progress")
-        state = request.app.state
-        progress.update(running=True, checked=0, drafted=0, started_at=_now(), finished_at=None)
-        progress["message"] = "Searching job boards..."
-
-        def counted(values: dict) -> None:
-            progress["checked"] += 1
-            progress["drafted"] += values["approval_status"] == "pending"
-            progress["message"] = f"Checked {progress['checked']} postings..."
-
-        def run() -> None:
-            try:
-                deps = build(state.store)
-                run_batch(deps, state.checkpointer, settings.max_postings_per_run, counted)
-                stopped = " Stopped at the spend ceiling." if deps.budget.exceeded else ""
-                progress["message"] = (
-                    f"Finished: {progress['checked']} new postings checked, "
-                    f"{progress['drafted']} drafts waiting for review.{stopped}"
-                )
-            except Exception as error:
-                logger.exception("run failed")
-                progress["message"] = f"Run failed: {error}"
-            finally:
-                progress.update(running=False, finished_at=_now())
-                batch_lock.release()
-
-        background.add_task(run)
         return {"status": "started"}
 
     return app

@@ -3,6 +3,7 @@
 import csv
 import io
 from collections.abc import Iterable
+from urllib.parse import urlsplit
 
 from memory.schema import DecisionRecord
 from memory.store import MemoryStore, canonical_url
@@ -17,8 +18,10 @@ STATUS_LABELS = {
 COLUMNS = (
     "fit_score",
     "title",
+    "company",
     "location",
     "status",
+    "source",
     "url",
     "fit_reasoning",
     "rejection_reason",
@@ -29,22 +32,32 @@ COLUMNS = (
 FORMULA_PREFIXES = ("=", "+", "-", "@", "\t", "\r")
 
 
-def _title_and_location(excerpt: str) -> tuple[str, str]:
+def _header(excerpt: str) -> dict:
+    """Title, location, and company from the header discovery writes into a posting."""
     lines = excerpt.splitlines()
-    title = lines[0].strip() if lines else ""
-    location = ""
-    if len(lines) > 1 and lines[1].startswith("Location: "):
-        location = lines[1].removeprefix("Location: ").strip()
-    return title, location
+    header = {"title": lines[0].strip() if lines else "", "location": "", "company": ""}
+    for line in lines[1:3]:
+        for field in ("location", "company"):
+            label = f"{field.capitalize()}: "
+            if line.startswith(label):
+                header[field] = line.removeprefix(label).strip()
+    return header
+
+
+def _source(url: str) -> str:
+    """The site a posting came from, which also credits aggregators that ask for it."""
+    return (urlsplit(url).hostname or "").removeprefix("www.")
 
 
 def to_row(record: DecisionRecord) -> dict:
-    title, location = _title_and_location(record.posting_excerpt)
+    header = _header(record.posting_excerpt)
     return {
         "fit_score": record.fit_score,
-        "title": title,
-        "location": location,
+        "title": header["title"],
+        "company": header["company"],
+        "location": header["location"],
         "status": STATUS_LABELS[record.status],
+        "source": _source(record.url),
         "url": record.url,
         "fit_reasoning": record.fit_reasoning or record.error or "",
         "rejection_reason": record.rejection_reason or "",

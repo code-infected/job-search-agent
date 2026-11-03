@@ -111,6 +111,16 @@ class MemoryStore:
         self.write(record.model_copy(update={"outcome": outcome}))
         return True
 
+    def release_discarded(self) -> int:
+        """Forget postings the model ruled out, so the next run scores them again.
+
+        Used after the profile or facts change. Human decisions are kept.
+        """
+        ids = self._collection.get(where={"status": "discarded"}, include=[])["ids"]
+        if ids:
+            self._collection.delete(ids=ids)
+        return len(ids)
+
     def release_failed(self, url: str) -> bool:
         """Let discovery retry a dead letter. Decisions and pending claims cannot be released."""
         record_id = _record_id(url)

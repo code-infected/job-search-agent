@@ -1,0 +1,436 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Job Search Agent Setup</title>
+<style>
+  :root { --bg: #f7f7f5; --card: #fff; --ink: #1c1c1a; --muted: #66665f; --line: #ddddd6; --accent: #2b5fa8; --good: #2e7d4f; --warn: #a3650f; --bad: #a83232; }
+  @media (prefers-color-scheme: dark) { :root { --bg: #171716; --card: #21211f; --ink: #ecece7; --muted: #a0a097; --line: #383835; --accent: #7fa8e0; --good: #7fcf9f; --warn: #e0b36f; --bad: #e08a8a; } }
+  * { box-sizing: border-box; }
+  body { margin: 0 auto; max-width: 820px; padding: 24px 16px 64px; background: var(--bg); color: var(--ink); font: 16px/1.5 system-ui, sans-serif; }
+  nav { display: flex; gap: 16px; margin-bottom: 8px; font-size: 14px; }
+  nav a { color: var(--accent); }
+  h1 { font-size: 22px; margin: 0 0 8px; }
+  h2 { font-size: 18px; margin: 0 0 4px; }
+  section { padding: 16px; margin: 16px 0; background: var(--card); border: 1px solid var(--line); border-radius: 8px; }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin: 8px 0; }
+  label { display: block; margin: 10px 0 4px; font-size: 14px; font-weight: 600; }
+  .hint, .muted { color: var(--muted); font-size: 14px; margin: 2px 0 8px; }
+  input, select, textarea { width: 100%; min-width: 0; padding: 8px; font: inherit; color: inherit; background: var(--bg); border: 1px solid var(--line); border-radius: 6px; }
+  .row input, .row select { width: auto; flex: 1 1 160px; }
+  textarea { resize: vertical; }
+  button { padding: 8px 14px; font: inherit; color: var(--accent); background: none; border: 1px solid currentColor; border-radius: 6px; cursor: pointer; }
+  button.primary { color: #fff; background: var(--accent); border-color: var(--accent); }
+  button.remove { color: var(--bad); padding: 4px 10px; font-size: 14px; }
+  button:disabled { opacity: 0.5; cursor: default; }
+  .checklist { list-style: none; padding: 0; margin: 8px 0 0; }
+  .checklist li { margin: 2px 0; }
+  .done { color: var(--good); }
+  .todo { color: var(--warn); }
+  .fact { padding: 10px 0; border-top: 1px solid var(--line); }
+  .fact .row { margin: 0 0 6px; }
+  .fact select { flex: 0 1 160px; }
+  .warning { color: var(--warn); font-size: 14px; margin: 4px 0 0; }
+  .result { color: var(--muted); font-size: 14px; min-height: 1.5em; margin: 6px 0 0; }
+  .item { display: flex; gap: 8px; align-items: center; justify-content: space-between; padding: 8px 0; border-top: 1px solid var(--line); overflow-wrap: anywhere; }
+  .item small { color: var(--muted); display: block; }
+</style>
+</head>
+<body>
+<nav><a href="/">Jobs</a><span>Setup</span></nav>
+<h1>Set up your job search</h1>
+<p class="muted">Everything stays on this computer, except what is sent to your model provider to score postings and write drafts.</p>
+<ul id="checklist" class="checklist"></ul>
+
+<section id="model-section">
+  <h2>1. Model</h2>
+  <p class="hint">The AI model that scores postings and writes drafts. You pay your provider for its use.</p>
+  <div class="row">
+    <select id="provider" aria-label="Provider"></select>
+    <input id="model-name" placeholder="Model name, for example claude-sonnet-5" aria-label="Model name">
+  </div>
+  <input id="api-key" type="password" autocomplete="off" placeholder="API key" aria-label="API key">
+  <p class="hint" id="key-hint"></p>
+  <button id="save-model" class="primary">Save model</button>
+  <p class="result" id="model-result" role="status"></p>
+</section>
+
+<section id="facts-section">
+  <h2>2. About you</h2>
+  <p class="hint">The agent only ever says what is written here. Upload your resume to get suggestions, then check every one: fix anything wrong, and delete anything you would not want quoted.</p>
+  <div class="row">
+    <input id="resume" type="file" accept=".pdf,.txt,.md,application/pdf,text/plain" aria-label="Resume file">
+    <button id="read-resume">Read resume</button>
+  </div>
+  <p class="result" id="resume-result" role="status"></p>
+  <label for="candidate-name">Your name</label>
+  <input id="candidate-name" autocomplete="off">
+  <div id="facts"></div>
+  <div class="row">
+    <button id="add-fact">Add a fact</button>
+    <button id="save-facts" class="primary">Save facts</button>
+  </div>
+  <p class="result" id="facts-result" role="status"></p>
+</section>
+
+<section id="search-section">
+  <h2>3. What you are looking for</h2>
+  <label for="profile">Describe the roles you want</label>
+  <p class="hint">In plain words: role types, your experience level, where you can work, and anything that rules a job out. The model scores every posting against this.</p>
+  <textarea id="profile" rows="4" placeholder="Entry-level backend or full-stack engineering roles, open to under two years of experience. I can work from my city or remotely. Rule out senior roles."></textarea>
+  <label for="keywords">Job titles must include one of</label>
+  <p class="hint">Comma separated. Leave empty to consider every title.</p>
+  <input id="keywords" placeholder="engineer, developer">
+  <label for="exclude">Skip titles containing</label>
+  <input id="exclude" placeholder="senior, sr , staff, principal, lead, manager">
+  <label for="locations">Locations</label>
+  <p class="hint">Comma separated. A posting open worldwide always passes. Leave empty for anywhere.</p>
+  <input id="locations" placeholder="india, bengaluru, remote">
+  <div class="row"><button id="save-search" class="primary">Save</button></div>
+  <p class="result" id="search-result" role="status"></p>
+</section>
+
+<section id="sources-section">
+  <h2>4. Where to look</h2>
+  <p class="hint">Add companies you would like to work for, and searches across many employers.</p>
+  <div id="sources"></div>
+
+  <label for="company">Add a company</label>
+  <p class="hint">Type a company name, or paste its careers page link. The agent finds which job board it uses.</p>
+  <div class="row">
+    <input id="company" placeholder="Company name or careers page link">
+    <button id="find">Find</button>
+  </div>
+  <p class="result" id="find-result" role="status"></p>
+  <div id="matches"></div>
+
+  <label for="remote-search">Remote jobs from many companies</label>
+  <p class="hint">Searches Remotive. It updates a few times a day, so the agent checks it at most every six hours.</p>
+  <div class="row">
+    <input id="remote-search" placeholder="Search terms, for example python">
+    <button id="add-remote">Add</button>
+  </div>
+
+  <label for="adzuna-search">Job search in one country</label>
+  <p class="hint">Searches Adzuna, which lists jobs from many sites. It needs a free key from developer.adzuna.com, entered under Preferences. Adzuna shares only a short summary of each job, so scores are rougher.</p>
+  <div class="row">
+    <input id="adzuna-country" placeholder="Country code, for example in" maxlength="2" style="flex: 0 1 220px">
+    <input id="adzuna-search" placeholder="Search terms, for example software engineer">
+    <button id="add-adzuna">Add</button>
+  </div>
+
+  <label for="posting-url">A single job posting</label>
+  <div class="row">
+    <input id="posting-url" placeholder="https://...">
+    <button id="add-url">Add</button>
+  </div>
+  <p class="result" id="sources-result" role="status"></p>
+</section>
+
+<section id="preferences-section">
+  <h2>5. Preferences</h2>
+  <label for="threshold">Minimum fit score for a draft</label>
+  <p class="hint">From 0 to 1. Lower it to see more borderline matches.</p>
+  <input id="threshold" type="number" min="0.05" max="0.95" step="0.05">
+  <label for="max-postings">New postings to check per run</label>
+  <input id="max-postings" type="number" min="1" max="200" step="1">
+  <label for="auto-run">Run automatically</label>
+  <p class="hint">While this app is open. New jobs appear on the Jobs page.</p>
+  <select id="auto-run">
+    <option value="0">Off</option>
+    <option value="6">Every 6 hours</option>
+    <option value="12">Every 12 hours</option>
+    <option value="24">Once a day</option>
+  </select>
+  <label for="max-cost">Spend limit per run, in US dollars</label>
+  <input id="max-cost" type="number" min="0.01" max="100" step="0.5">
+  <div class="row">
+    <div style="flex: 1 1 160px"><label for="price-in">Model price per million input tokens</label><input id="price-in" type="number" min="0" step="0.01"></div>
+    <div style="flex: 1 1 160px"><label for="price-out">Per million output tokens</label><input id="price-out" type="number" min="0" step="0.01"></div>
+  </div>
+  <p class="hint">From your provider's pricing page. Without prices, only the token limit applies and cost is not shown.</p>
+  <label for="adzuna-id">Adzuna app ID and key (optional)</label>
+  <div class="row">
+    <input id="adzuna-id" autocomplete="off" placeholder="App ID">
+    <input id="adzuna-key" type="password" autocomplete="off" placeholder="App key">
+  </div>
+  <p class="hint" id="adzuna-hint"></p>
+  <div class="row"><button id="save-preferences" class="primary">Save preferences</button></div>
+  <p class="result" id="preferences-result" role="status"></p>
+</section>
+
+<section>
+  <h2>Score old jobs again</h2>
+  <p class="hint">After you change your facts or what you are looking for, the agent can look again at jobs it ruled out. Each one costs a model call on the next run. Jobs you approved or rejected are kept.</p>
+  <button id="rescore">Re-check ruled-out jobs</button>
+  <p class="result" id="rescore-result" role="status"></p>
+</section>
+
+<template id="fact-template">
+  <div class="fact">
+    <div class="row">
+      <select class="category" aria-label="Category">
+        <option>experience</option><option>project</option><option>education</option><option>skill</option>
+        <option>certification</option><option>award</option><option>other</option>
+      </select>
+      <button class="remove">Remove</button>
+    </div>
+    <textarea class="text" rows="2" aria-label="Fact"></textarea>
+    <p class="warning" hidden></p>
+  </div>
+</template>
+
+<script>
+  // Text from a resume or a job board is untrusted, so it is only ever set with textContent or value.
+  const $ = (id) => document.getElementById(id);
+  const SOURCE_NAMES = { greenhouse: "Greenhouse", lever: "Lever", ashby: "Ashby", workable: "Workable", smartrecruiters: "SmartRecruiters", remotive: "Remotive", adzuna: "Adzuna", url: "Posting link" };
+  let search = { target_profile: "", keywords: [], exclude_keywords: [], locations: [], queries: [] };
+
+  async function api(path, method = "GET", body) {
+    const options = { method };
+    if (body !== undefined) {
+      options.headers = { "Content-Type": body instanceof Blob ? (body.type || "application/octet-stream") : "application/json" };
+      options.body = body instanceof Blob ? body : JSON.stringify(body);
+    }
+    const response = await fetch(path, options);
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      const detail = Array.isArray(data.detail)
+        ? data.detail.map((item) => `${item.loc.slice(1).join(" ")}: ${item.msg}`).join("; ")
+        : data.detail;
+      throw new Error(detail || `Request failed: ${response.status}`);
+    }
+    return data;
+  }
+
+  function el(tag, text, className) {
+    const node = document.createElement(tag);
+    if (text !== undefined) node.textContent = text;
+    if (className) node.className = className;
+    return node;
+  }
+
+  const list = (text) => text.split(",").map((part) => part.trim().toLowerCase()).filter(Boolean);
+  // Keep a trailing space, so "sr " can skip "Sr Engineer" without skipping "Srinagar".
+  const listKeepSpaces = (text) => text.split(",").map((part) => part.replace(/^\s+/, "").toLowerCase()).filter((part) => part.trim());
+
+  async function run(button, resultId, action) {
+    const result = $(resultId);
+    button.disabled = true;
+    result.textContent = "Working...";
+    try {
+      result.textContent = await action();
+      await refreshChecklist();
+    } catch (error) {
+      result.textContent = error.message;
+    } finally {
+      button.disabled = false;
+    }
+  }
+
+  function renderChecklist(state) {
+    const steps = [["model", "Model chosen"], ["facts", "Facts about you saved"], ["search", "What you are looking for saved"], ["sources", "At least one place to look"]];
+    $("checklist").replaceChildren(...steps.map(([key, label]) => {
+      const done = !state.missing.includes(key) && !(key === "sources" && state.missing.includes("search"));
+      return el("li", `${done ? "Done" : "To do"}: ${label}`, done ? "done" : "todo");
+    }));
+    if (state.ready) $("checklist").append(el("li", "Ready. Start a run from the Jobs page.", "done"));
+  }
+
+  async function refreshChecklist() {
+    renderChecklist(await api("/setup/state"));
+  }
+
+  // Model
+  function renderModel(model) {
+    $("provider").replaceChildren(...model.providers.map((name) => el("option", name)));
+    $("provider").value = model.provider || "anthropic";
+    $("model-name").value = model.name;
+    $("key-hint").textContent = model.key_set ? "A key is saved. Leave this empty to keep it." : "No key saved yet. Local models through ollama need none.";
+  }
+  $("save-model").addEventListener("click", (event) => run(event.target, "model-result", async () => {
+    const model = await api("/setup/model", "POST", { provider: $("provider").value, name: $("model-name").value.trim(), api_key: $("api-key").value.trim() });
+    $("api-key").value = "";
+    renderModel(model);
+    return "Saved.";
+  }));
+
+  // Facts
+  function addFact(fact = { category: "experience", text: "" }) {
+    const node = $("fact-template").content.cloneNode(true);
+    const root = node.querySelector(".fact");
+    root.querySelector(".category").value = fact.category;
+    root.querySelector(".text").value = fact.text;
+    if (fact.unsupported && fact.unsupported.length) {
+      const warning = root.querySelector(".warning");
+      warning.hidden = false;
+      warning.textContent = `Not found in your resume: ${fact.unsupported.join(", ")}. Check this before saving.`;
+    }
+    root.querySelector(".remove").addEventListener("click", () => root.remove());
+    $("facts").append(node);
+  }
+  function renderFacts(facts) {
+    $("facts").replaceChildren();
+    $("candidate-name").value = facts ? facts.candidate_name : "";
+    (facts ? facts.facts : []).forEach(addFact);
+  }
+  $("add-fact").addEventListener("click", () => addFact());
+  $("read-resume").addEventListener("click", (event) => run(event.target, "resume-result", async () => {
+    const file = $("resume").files[0];
+    if (!file) throw new Error("Choose a PDF or text file first.");
+    const suggested = await api("/setup/resume", "POST", file);
+    renderFacts(suggested);
+    const flagged = suggested.facts.filter((fact) => fact.unsupported.length).length;
+    return `${suggested.facts.length} suggested facts. Nothing is saved yet. Check each one${flagged ? `, especially the ${flagged} flagged below` : ""}, then save.`;
+  }));
+  $("save-facts").addEventListener("click", (event) => run(event.target, "facts-result", async () => {
+    const counts = {};
+    const facts = [...document.querySelectorAll(".fact")].map((node) => {
+      const category = node.querySelector(".category").value;
+      counts[category] = (counts[category] || 0) + 1;
+      return { id: `${category}-${counts[category]}`, category, text: node.querySelector(".text").value.trim() };
+    }).filter((fact) => fact.text);
+    const saved = await api("/setup/facts", "PUT", { candidate_name: $("candidate-name").value.trim(), facts });
+    return `Saved ${saved.saved} facts.`;
+  }));
+
+  // What to look for, and where
+  function renderSearch() {
+    $("profile").value = search.target_profile;
+    $("keywords").value = search.keywords.join(", ");
+    $("exclude").value = search.exclude_keywords.join(",");
+    $("locations").value = search.locations.join(", ");
+    $("sources").replaceChildren(...search.queries.map((query, index) => {
+      const item = el("div", undefined, "item");
+      const label = el("div", query.board || query.search || query.url);
+      const kind = query.source === "adzuna" ? `Adzuna search in ${query.country.toUpperCase()}` : SOURCE_NAMES[query.source];
+      label.append(el("small", kind));
+      const remove = el("button", "Remove", "remove");
+      remove.addEventListener("click", () => saveSources(() => search.queries.splice(index, 1), "Removed."));
+      item.append(label, remove);
+      return item;
+    }));
+    if (!search.queries.length) $("sources").append(el("p", "No sources yet.", "muted"));
+  }
+  async function saveSearch() {
+    search.target_profile = $("profile").value.trim();
+    if (!search.target_profile) throw new Error("Describe the roles you want in step 3 first.");
+    search.keywords = list($("keywords").value);
+    search.exclude_keywords = listKeepSpaces($("exclude").value);
+    search.locations = list($("locations").value);
+    await api("/setup/search", "PUT", search);
+    renderSearch();
+  }
+  async function saveSources(change, message) {
+    const before = JSON.stringify(search.queries);
+    change();
+    try {
+      await saveSearch();
+      $("sources-result").textContent = message;
+      await refreshChecklist();
+    } catch (error) {
+      search.queries = JSON.parse(before);
+      renderSearch();
+      $("sources-result").textContent = error.message;
+    }
+  }
+  const hasQuery = (query) => search.queries.some((existing) => ["source", "board", "search", "url", "country"].every((key) => existing[key] === query[key]));
+  function addQuery(query) {
+    if (hasQuery(query)) { $("sources-result").textContent = "Already added."; return; }
+    saveSources(() => search.queries.push(query), "Added.");
+  }
+  $("save-search").addEventListener("click", (event) => run(event.target, "search-result", async () => { await saveSearch(); return "Saved."; }));
+  $("find").addEventListener("click", (event) => run(event.target, "find-result", async () => {
+    $("matches").replaceChildren();
+    const matches = await api("/setup/boards", "POST", { query: $("company").value.trim() });
+    for (const match of matches) {
+      const item = el("div", undefined, "item");
+      const label = el("div", `${match.board} on ${SOURCE_NAMES[match.source]}: ${match.open_jobs} open jobs`);
+      if (match.sample_titles.length) label.append(el("small", `For example: ${match.sample_titles.join("; ")}`));
+      const add = el("button", "Add");
+      add.addEventListener("click", () => addQuery({ source: match.source, board: match.board }));
+      item.append(label, add);
+      $("matches").append(item);
+    }
+    return matches.length
+      ? "Check the example titles to confirm it is the right company, then add it."
+      : "No job board found. Try the company's careers page link, or check the spelling.";
+  }));
+  $("add-remote").addEventListener("click", () => {
+    const terms = $("remote-search").value.trim();
+    if (terms) addQuery({ source: "remotive", search: terms });
+  });
+  $("add-adzuna").addEventListener("click", () => {
+    const country = $("adzuna-country").value.trim().toLowerCase();
+    const terms = $("adzuna-search").value.trim();
+    if (!/^[a-z]{2}$/.test(country)) { $("sources-result").textContent = "Enter a two-letter country code, such as in, gb, or us."; return; }
+    if (terms) addQuery({ source: "adzuna", country, search: terms });
+  });
+  $("add-url").addEventListener("click", () => {
+    const url = $("posting-url").value.trim();
+    if (!/^https?:\/\//i.test(url)) { $("sources-result").textContent = "Paste a link starting with https://"; return; }
+    addQuery({ source: "url", url });
+  });
+
+  // Preferences
+  function renderPreferences(preferences) {
+    $("threshold").value = preferences.fit_score_threshold;
+    $("max-postings").value = preferences.max_postings_per_run;
+    $("auto-run").value = String(Math.round(preferences.auto_run_hours));
+    $("max-cost").value = preferences.max_cost_per_run_usd;
+    $("price-in").value = preferences.input_usd_per_mtok;
+    $("price-out").value = preferences.output_usd_per_mtok;
+    $("adzuna-hint").textContent = preferences.adzuna_set ? "Adzuna keys are saved. Leave these empty to keep them." : "Only needed for Adzuna searches.";
+  }
+  $("save-preferences").addEventListener("click", (event) => run(event.target, "preferences-result", async () => {
+    const preferences = await api("/setup/preferences", "PUT", {
+      fit_score_threshold: Number($("threshold").value),
+      max_postings_per_run: Number($("max-postings").value),
+      max_cost_per_run_usd: Number($("max-cost").value),
+      auto_run_hours: Number($("auto-run").value),
+      input_usd_per_mtok: Number($("price-in").value),
+      output_usd_per_mtok: Number($("price-out").value),
+      adzuna_app_id: $("adzuna-id").value.trim(),
+      adzuna_app_key: $("adzuna-key").value.trim(),
+    });
+    $("adzuna-id").value = "";
+    $("adzuna-key").value = "";
+    renderPreferences(preferences);
+    return "Saved.";
+  }));
+
+  // Re-check, in two clicks so it is never done by accident
+  let rescoreArmed = false;
+  $("rescore").addEventListener("click", (event) => {
+    if (!rescoreArmed) {
+      rescoreArmed = true;
+      event.target.textContent = "Click again to confirm";
+      return;
+    }
+    rescoreArmed = false;
+    event.target.textContent = "Re-check ruled-out jobs";
+    run(event.target, "rescore-result", async () => {
+      const result = await api("/setup/rescore", "POST", {});
+      return `${result.released} jobs will be scored again on the next run.`;
+    });
+  });
+
+  (async () => {
+    try {
+      const state = await api("/setup/state");
+      renderChecklist(state);
+      renderModel(state.model);
+      renderFacts(state.facts);
+      if (state.facts_error) $("facts-result").textContent = `Your saved facts could not be read: ${state.facts_error}`;
+      if (state.search) search = { ...search, ...state.search };
+      if (state.search_error) $("search-result").textContent = `Your saved search could not be read: ${state.search_error}`;
+      renderSearch();
+      renderPreferences(state.preferences);
+    } catch (error) {
+      $("checklist").replaceChildren(el("li", error.message, "todo"));
+    }
+  })();
+</script>
+</body>
+</html>

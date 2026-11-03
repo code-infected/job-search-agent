@@ -6,7 +6,8 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-load_dotenv()
+ENV_PATH = Path(__file__).with_name(".env")
+load_dotenv(ENV_PATH)
 
 
 @dataclass(frozen=True)
@@ -25,6 +26,7 @@ class Settings:
     fit_score_threshold: float
     request_delay_seconds: float
     review_stale_hours: float
+    auto_run_hours: float
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -44,4 +46,5 @@ class Settings:
             fit_score_threshold=float(env("FIT_SCORE_THRESHOLD", "0.7")),
             request_delay_seconds=float(env("REQUEST_DELAY_SECONDS", "1.0")),
             review_stale_hours=float(env("REVIEW_STALE_HOURS", "24")),
+            auto_run_hours=float(env("AUTO_RUN_HOURS", "0")),
         )
