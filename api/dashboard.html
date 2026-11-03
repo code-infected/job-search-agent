@@ -59,7 +59,8 @@
     });
     if (!response.ok) {
       const body = await response.json().catch(() => ({}));
-      throw new Error(typeof body.detail === "string" ? body.detail : `Request failed: ${response.status}`);
+      const detail = Array.isArray(body.detail) ? body.detail.map((item) => item.msg).join("; ") : body.detail;
+      throw new Error(typeof detail === "string" && detail ? detail : `Request failed: ${response.status}`);
     }
     return response.json();
   }
@@ -74,6 +75,11 @@
     card.querySelector(".draft").textContent = draft_message;
     const reason = card.querySelector(".reason");
     const decide = (decision) => async () => {
+      if (decision === "rejected" && !reason.value.trim()) {
+        statusLine.textContent = "A rejection needs a reason, because it guides future scoring.";
+        reason.focus();
+        return;
+      }
       try {
         await call(`/reviews/${encodeURIComponent(review.run_id)}`, {
           method: "POST",
