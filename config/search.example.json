@@ -1,31 +1,16 @@
 {
   "target_profile": "Describe the roles you want in plain language: titles, seniority, locations, and anything that rules a role out.",
+  "keywords": ["engineer", "developer"],
+  "exclude_keywords": ["manager"],
+  "locations": ["remote", "example city"],
   "queries": [
-    {
-      "source": "greenhouse",
-      "board": "example-board-token",
-      "keywords": [
-        "engineer",
-        "developer"
-      ],
-      "exclude_keywords": [
-        "manager"
-      ],
-      "locations": [
-        "remote",
-        "example city"
-      ]
-    },
-    {
-      "source": "lever",
-      "board": "example-board-token",
-      "keywords": [
-        "engineer"
-      ]
-    },
-    {
-      "source": "url",
-      "url": "https://example.com/careers/some-posting"
-    }
+    {"source": "greenhouse", "board": "example-board"},
+    {"source": "lever", "board": "example-board", "keywords": ["engineer"]},
+    {"source": "ashby", "board": "example-board"},
+    {"source": "workable", "board": "example-board"},
+    {"source": "smartrecruiters", "board": "ExampleBoard"},
+    {"source": "remotive", "search": "python"},
+    {"source": "adzuna", "search": "software developer", "country": "gb"},
+    {"source": "url", "url": "https://example.com/careers/some-posting"}
   ]
 }

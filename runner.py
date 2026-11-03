@@ -14,7 +14,7 @@ from config import Settings
 from graph.build import Dependencies, build_graph
 from graph.facts import load_facts
 from graph.llm import Budget
-from graph.nodes.discover import PoliteClient, fetch_postings, load_search_config
+from graph.nodes.discover import FetchLog, PoliteClient, fetch_postings, load_search_config
 from graph.nodes.human_review import ReviewDecision
 from graph.nodes.send import build_draft_sink
 from graph.state import initial_state
@@ -35,6 +35,7 @@ def build_dependencies(settings: Settings, store: Optional[MemoryStore] = None) 
     """Load everything a run needs, failing at startup rather than mid-graph."""
     search = load_search_config(settings.search_config_path)
     client = PoliteClient(delay_seconds=settings.request_delay_seconds)
+    fetch_log = FetchLog(settings.checkpoint_db.parent / "source_fetches.json")
     return Dependencies(
         model=get_chat_model(),
         store=store or MemoryStore(settings.vector_store_path),
@@ -48,8 +49,23 @@ def build_dependencies(settings: Settings, store: Optional[MemoryStore] = None) 
             settings.input_usd_per_mtok,
             settings.output_usd_per_mtok,
         ),
-        postings=fetch_postings(search.queries, client),
+        postings=fetch_postings(search.resolved_queries(), client, fetch_log),
     )
+
+
+def build_read_only_graph(store: MemoryStore, checkpointer: SqliteSaver):
+    """A graph for reading paused runs. Nodes are never invoked, so it needs no model or facts."""
+    deps = Dependencies(
+        model=None,
+        store=store,
+        facts=None,
+        target_profile="",
+        fit_score_threshold=1.0,
+        sink=None,
+        budget=None,
+        postings=iter(()),
+    )
+    return build_graph(deps, checkpointer)
 
 
 def _config(run_id: str) -> dict:
