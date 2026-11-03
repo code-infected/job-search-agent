@@ -55,7 +55,11 @@ The first visit goes to the setup page, which walks through four steps:
 1. **Model.** Pick a provider and model and paste its key. The key is written to `.env` and never shown again.
 2. **About you.** Upload your resume as PDF or text. The model suggests facts copied from it, and any fact using a name or number not found in the resume is flagged. Nothing is saved until you have checked, edited, and confirmed the list. Email addresses and phone numbers are left out. These facts are the only things a draft may say about you.
 3. **What you're looking for.** A plain-language description of the roles you want, plus keyword, excluded keyword, and location filters. Filters run before any model call, so they save money.
-4. **Where to look.** Type a company name or paste its careers page link, and the agent finds which job board it uses. You can also add a remote job search or a country-wide search, or a single posting link.
+4. **Where to look.** Any mix of four kinds of source, all filtered by step 3 before any model call:
+   - **Job sites** listing many employers, searched with your search terms on every run. Twelve need no account, and five more need a free key you can paste on the same page.
+   - **Every company on a board system**, such as every Greenhouse or Workable board the agent knows of. See [Scanning every company](#scanning-every-company).
+   - **A specific company**, found from its name or careers page link, including Workday careers sites.
+   - **A single posting link.**
 
 A last section sets the fit threshold, how many postings one run may check, a spend limit, model prices for cost tracking, and an optional schedule.
 
@@ -65,14 +69,54 @@ Everything stays on your machine in `data/` and `.env`, both gitignored. The onl
 
 The setup page writes two files you can also edit directly. Copy `config/facts.example.json` and `config/search.example.json` into `data/`, and `.env.example` to `.env`.
 
-`search.json` takes a `target_profile`, optional top-level `keywords`, `exclude_keywords`, and `locations` that every query inherits, and a list of `queries`. A query that sets its own filter overrides the shared one. Locations containing "worldwide" or "anywhere" always pass a location filter.
+`search.json` takes these fields:
 
-| Source | Query fields | Notes |
+| Field | Meaning |
+| --- | --- |
+| `target_profile` | The roles you want, in plain words. Every posting is scored against it |
+| `keywords`, `exclude_keywords`, `locations` | Title and location filters every source inherits, unless a query sets its own. Locations containing "worldwide" or "anywhere" always pass |
+| `job_sites` | Names of job sites to search on every run, from the table below |
+| `search_terms` | Up to ten terms sent to each job site's search. Defaults to `keywords`. Sites without a search filter their titles by these terms instead |
+| `country`, `where` | A two-letter country code and a city or region, for sites that search one place |
+| `scan_companies` | Board systems whose every known company is checked, such as `["greenhouse", "workable"]`. Needs `keywords` |
+| `companies_per_run` | How many of those companies to check per run. Default 300 |
+| `queries` | Individual sources: a company board, a Workday careers link, or a posting link |
+
+Job sites, by name:
+
+| Name | Covers | Key |
 | --- | --- | --- |
-| `greenhouse`, `lever`, `ashby`, `workable`, `smartrecruiters` | `board` | A company's public board. `python cli.py find-board "Company"` finds it |
-| `remotive` | `search` | Remote jobs worldwide. Fetched at most once every six hours, as Remotive asks, and each posting credits it |
-| `adzuna` | `search`, `country` | Country-wide search across many employers. Needs a free key in `ADZUNA_APP_ID` and `ADZUNA_APP_KEY`. Two-letter country code such as `gb` or `in` |
+| `remotive`, `remoteok`, `weworkremotely`, `himalayas`, `jobicy`, `workingnomads` | Remote jobs, worldwide | None |
+| `hackernews` | Each month's "Who is hiring?" thread, mostly startups | None |
+| `fourdayweek` | Jobs with a four-day week | None |
+| `arbeitnow` | Germany and Europe | None |
+| `landingjobs` | Technology jobs, Portugal and Europe | None |
+| `getonbrd` | Technology jobs, Latin America | None |
+| `jobtech` | Sweden's public employment service | None |
+| `adzuna` | One country at a time, about 20 supported. Summaries only | `ADZUNA_APP_ID`, `ADZUNA_APP_KEY` |
+| `jooble` | Most countries. Summaries only | `JOOBLE_API_KEY` |
+| `usajobs` | United States government | `USAJOBS_API_KEY`, `USAJOBS_EMAIL` |
+| `reed` | United Kingdom. Summaries only | `REED_API_KEY` |
+| `findwork` | Software jobs | `FINDWORK_API_KEY` |
+
+Each job site asks to be credited and linked, so every posting says where it was found and keeps that site's link. Sites that ask for infrequent requests are fetched at most hourly, Remotive and Hacker News at most every six hours.
+
+Queries, by source:
+
+| Source | Fields | Notes |
+| --- | --- | --- |
+| `greenhouse`, `lever`, `ashby`, `workable`, `smartrecruiters`, `recruitee`, `breezy`, `rippling`, `gem` | `board` | A company's public board. `python cli.py find-board "Company"` finds it |
+| `workday` | `url`, optional `search` | A Workday careers link, such as `https://acme.wd5.myworkdayjobs.com/Careers` |
+| any job site | `search`, `country`, `where` | One search on one site, if you want it separate from `job_sites` |
 | `url` | `url` | One posting page |
+
+### Scanning every company
+
+No board system offers a search across all its companies, so the agent builds its own list from [Common Crawl](https://commoncrawl.org), a free public archive of the web: every board page the crawl has seen names its company. The list covers Greenhouse, Lever, Ashby, Workable, SmartRecruiters, Recruitee, and Breezy HR, typically several thousand companies in all, and is stored in `data/board_directory.json` and refreshed monthly.
+
+Build it with the button on the setup page or `python cli.py directory`. Otherwise the first run that needs it builds it. Building takes a few minutes, because Common Crawl's index is slow and often busy. A page it fails to answer is retried and then skipped, so counts vary between builds, and the next refresh adds what was missed.
+
+Each run checks the companies not checked in the last 12 hours, those never checked first, alternating between systems. Titles are read first, and only postings that pass your filters are opened. Each board system sees about one request a second. A company whose board has gone is skipped for a month.
 
 ## Running
 
@@ -90,6 +134,7 @@ python cli.py outcome <url> "interview"
 python cli.py release <url>       # retry a posting that failed
 python cli.py rescore             # score ruled-out postings again, after changing your profile
 python cli.py find-board "Acme"   # find a company's job board by name or careers link
+python cli.py directory           # build or show the list of companies on each board system
 ```
 
 A rejection needs a reason, because it becomes precedent for future scoring. Approved drafts land in `data/drafts/`. With `DRAFT_BACKEND=gmail` and OAuth credentials using the `gmail.compose` scope, they become Gmail drafts instead.
@@ -151,13 +196,16 @@ Run the unit tests with `pytest`. They use a scripted model and need no keys or 
 | Restart during a pending review | The review is restored from SQLite and resumes without repeating earlier nodes |
 | Review left unanswered | Listed by the digest after `REVIEW_STALE_HOURS` |
 | Spend ceiling reached | The batch stops. `MAX_COST_PER_RUN_USD` needs `MODEL_*_USD_PER_MTOK` set, otherwise only `MAX_TOKENS_PER_RUN` applies |
-| Job board rate limit | Minimum delay between requests, backoff on 429 and 5xx, honouring `Retry-After` |
+| Job board rate limit | Minimum delay between requests to each host, backoff on 429 and 5xx, honouring `Retry-After` |
+| Job site key missing or refused | That site is skipped and logged without the key. The others continue |
 | Hostile or broken source | Non-public addresses are refused on every redirect hop, responses are size and time capped, posting URLs are validated, and one bad source does not stop the others |
 
 ## Known limitations
 
-- **Discovery** covers public company boards on five systems, Remotive, Adzuna, and single posting links. LinkedIn, Indeed, Naukri, and similar sites are not included, because their terms forbid automated collection. General web search is not included, since it needs a paid search API.
-- **Adzuna** only provides a short summary of each posting, so scores from it rest on less text. The posting text tells the model this.
+- **Sites not covered:** LinkedIn, Indeed, Naukri, Glassdoor, Monster, and Wellfound are not read, because their terms forbid automated collection or they offer no public API. iCIMS, Taleo, SuccessFactors, and Personio boards are not read either, for lack of a public feed this project could verify. General web search is not included, since it needs a paid search API.
+- **Summaries only:** Adzuna, Jooble, and Reed share a short summary of each posting, so scores from them rest on less text. The posting text tells the model this.
+- **Company list coverage** depends on what Common Crawl has seen. A company whose board page the crawl missed is not in the list until a later crawl finds it, but it can still be added by name. Lever boards in particular are often missing, because the index frequently fails to answer for them.
+- **Keyed sites** were built from each provider's documented response format and tested against recorded responses, but not against the live service, since that needs a personal key.
 - **Board finder** cannot read careers pages rendered by JavaScript. Use the company name instead, or open the page and copy the link to its job board.
 - **Outreach drafts** have no recipient. The agent does not look up hiring managers or email addresses.
 - **Stuck claims:** a process killed between discovery and a terminal state leaves its posting marked in progress, so it will not be rediscovered until released.
